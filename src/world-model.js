@@ -11,7 +11,7 @@ const { readPng, writePng } = require('./texture-image');
 
 const MODEL_ID = /^model-[0-9a-f]{12}$/;
 const isUserModel = id => MODEL_ID.test(String(id));
-const MAX_TRIANGLES = 20000, MAX_PARTS = 32, MAX_MODELS = 16;
+const MAX_TRIANGLES = 100000, MAX_PARTS = 32, MAX_MODELS = 16;
 // glTF's metres in the game's units (Mario is about 160 tall).
 const UNITS = 100;
 
