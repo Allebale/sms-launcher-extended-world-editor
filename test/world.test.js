@@ -419,3 +419,22 @@ test('retextures are checked and written into the stage archive\'s copy of each 
   assert.deepEqual([skin.width, skin.format, Array.from(skin.rgba.subarray(0, 3)).map(v => v > 150)], [16, 14, [true, false, false]]);
   assert.deepEqual([eye.width, eye.format, eye.rgba[0]], [8, 6, 0x80]);
 });
+
+test('ground added to a stage grows the pools its Map entry gives the game for it', () => {
+  const collisionFile = require('../src/collision');
+  const small = collisionFile.compose(null, { add: [{ p: [[0, 0, 0], [100, 0, 0], [0, 0, 100]], code: 0 }] });
+  // A floor 3000 across: 4 × 4 cells of 1024 from where it starts.
+  const big = collisionFile.compose(small, { add: [{ p: [[-1500, 0, -1500], [1500, 0, -1500], [-1500, 0, 1500]], code: 0 }] });
+  const ints = values => Buffer.concat(values.map(v => { const b = Buffer.alloc(4); b.writeInt32BE(v); return b; }));
+  const map = { type: 'Map', nameBytes: Buffer.from('map'), data: ints([1, 1, 7, 8, 16, 16, 100, 300, 10, 0]), children: null };
+  const tree = { type: 'GroupObj', nameBytes: Buffer.from('root'), data: Buffer.alloc(0), children: [map] };
+  world.growCollisionPools({ files: () => new Map([['map/map.col', small]]) }, { base: 'home' }, tree, big);
+  const [triangles, lists] = [map.data.readInt32BE(24), map.data.readInt32BE(28)];
+  assert.ok(triangles >= 101 && triangles < 400, `triangles ${triangles}`);
+  assert.ok(lists >= 300 + 9, `lists ${lists}`);
+  assert.deepEqual([map.data.readInt32BE(16), map.data.readInt32BE(32), map.data.readInt32BE(36)], [16, 10, 0]);  // the rest as it was
+  // Nothing added, nothing grows.
+  const same = { ...map, data: ints([0, 16, 16, 100, 300, 10, 0]) };
+  world.growCollisionPools({ files: () => new Map([['map/map.col', small]]) }, { base: 'home' }, { ...tree, children: [same] }, small);
+  assert.deepEqual([same.data.readInt32BE(12), same.data.readInt32BE(16)], [100, 300]);
+});

@@ -1243,7 +1243,42 @@ function buildScene(library, project) {
       : `${who} needs ${need.what}, found in ${need.where}, and the game crashes without ${need.names?.length > 1 ? 'them' : 'it'}. Remove it, or place ${need.names?.length > 1 ? 'them' : 'it'} too, to export or play this level.`);
   }
   const raised = fitManagers(tree);
+  if (Object.keys(project.paint).length || stage.hasStageEdits(project)) growCollisionPools(library, project, tree, buildCollision(library, project));
   return { tree, needs, raised };
+}
+
+// The stage's Map entry sizes the ground's pools as the stage loads
+// (TMap::load: TMapXlu's groups, then TMapCollisionData::init's grid width
+// and depth in 1024-unit cells, its most triangles and its most cell list
+// entries, a triangle taking one in each cell its box covers). Ground added
+// to the stage would run past them, into the moving objects' lists, and the
+// game crashes as it loads: they grow by what was added, with room to spare.
+function collisionUse(col, gridX, gridZ) {
+  const { position: p } = collisionFile.parse(col);
+  const half = [gridX / 2 * 1024, gridZ / 2 * 1024], cell = (v, k) => Math.max(0, Math.min((k ? gridZ : gridX) - 1, Math.floor((v + half[k]) / 1024)));
+  let lists = 0;
+  for (let t = 0; t < p.length; t += 9) {
+    const xs = [p[t], p[t + 3], p[t + 6]], zs = [p[t + 2], p[t + 5], p[t + 8]];
+    lists += (cell(Math.max(...xs), 0) - cell(Math.min(...xs), 0) + 1) * (cell(Math.max(...zs), 1) - cell(Math.min(...zs), 1) + 1);
+  }
+  return { triangles: p.length / 9, lists };
+}
+function growCollisionPools(library, project, tree, col) {
+  const original = library.files(project.base).get('map/map.col');
+  let map = null;
+  sceneBin.walk(tree, node => { if (!map && !node.children && node.type === 'Map') map = node; });
+  if (!map || !original) return;
+  const data = map.data;
+  let at = 0;
+  const groups = data.readInt32BE(at); at += 4;
+  for (let g = 0; g < groups && at + 4 <= data.length; g++) { const n = data.readInt32BE(at); at += 4 + n * 8; }
+  if (at + 20 > data.length) return;
+  const [gridX, gridZ, triangles, lists] = [0, 4, 8, 12].map(k => data.readInt32BE(at + k));
+  if (!(gridX > 0 && gridZ > 0)) return;
+  const before = collisionUse(original, gridX, gridZ), after = collisionUse(col, gridX, gridZ);
+  const grow = (current, more) => more > 0 ? current + more + Math.ceil(more / 4) + 256 : current;
+  data.writeInt32BE(grow(triangles, after.triangles - before.triangles), at + 8);
+  data.writeInt32BE(grow(lists, after.lists - before.lists), at + 12);
 }
 
 function cloneNode(node) {
@@ -1421,5 +1456,5 @@ function originalPath(tree, file) {
 module.exports = {
   Library, WORLDS, CATEGORIES, SURFACES, GROUND_TYPES, CAMERA_TYPES, CATALOG_VERSION, PROJECT_FORMAT, FLOOR_NORMAL, worldOf, sceneLabel, buildCatalog, loadLevel, cleanProject,
   buildScene, buildCollision, buildModel, buildArchive, stageTable, stageStart, playTexts, setMessages, readTransform, writeTransform, describe, categoryOf, labelOf, humanize, fitManagers,
-  paintNpc, parseNpcLook, NPC_TYPES, retexturable, applyRetextures,
+  paintNpc, parseNpcLook, NPC_TYPES, retexturable, applyRetextures, growCollisionPools,
 };
