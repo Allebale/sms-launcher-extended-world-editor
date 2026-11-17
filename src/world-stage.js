@@ -14,6 +14,8 @@ const levelModel = require('./level-model');
 const collisionFile = require('./collision');
 const build = require('./world-build');
 const { BmdEdit, POS, NRM, CLR0, TEX0 } = require('./bmd-edit');
+const { cmpr } = require('./j3d-write');
+const { readPng } = require('./texture-image');
 
 const MAP = 'map/map/map.bmd', COL = 'map/map.col', SEA = 'map/map/sea.bmd';
 
@@ -207,6 +209,139 @@ function paletteModel(library, id) {
   return levelModel.bake(model);
 }
 
+// --- Players' own textures --------------------------------------------------------
+
+// Pictures players bring (PNG or JPEG, turned into a PNG with sides a power of
+// two, 8 to 512, as they're imported), kept in the level file itself so it
+// travels with it. They paint and build like the stages' own textures; the
+// export writes each into the stage's model once, as the game's own
+// compressed format (CMPR) with smaller levels for distance.
+const USER_ID = /^user-[0-9a-f]{12}$/;
+const USER_MAX = 32, USER_SIDE = [8, 512], USER_BYTES = 1.5e6;
+const isUserTexture = id => USER_ID.test(String(id));
+const powerOfTwo = v => Number.isInteger(v) && v >= USER_SIDE[0] && v <= USER_SIDE[1] && (v & (v - 1)) === 0;
+// A PNG's size from its header, without reading the picture.
+function pngSize(data) {
+  if (data.length < 24 || data.readUInt32BE(0) !== 0x89504e47 || data.toString('latin1', 12, 16) !== 'IHDR') return null;
+  return { width: data.readUInt32BE(16), height: data.readUInt32BE(20) };
+}
+function cleanUserTextures(input) {
+  const out = [], seen = new Set();
+  for (const texture of (Array.isArray(input) ? input : []).slice(0, USER_MAX * 2)) {
+    if (!texture || !isUserTexture(texture.id) || seen.has(texture.id) || typeof texture.png !== 'string' || texture.png.length > USER_BYTES * 1.4) continue;
+    const size = pngSize(Buffer.from(texture.png.slice(0, 64), 'base64'));
+    if (!size || !powerOfTwo(size.width) || !powerOfTwo(size.height)) continue;
+    seen.add(texture.id);
+    const tile = Number(texture.tile);
+    out.push({
+      id: texture.id, label: String(texture.label || 'My texture').slice(0, 40),
+      group: PALETTE_GROUPS.some(g => g.id === texture.group) ? texture.group : 'ground',
+      ground: /^[a-z-]{1,20}$/.test(texture.ground) ? texture.ground : 'stone',
+      tile: Number.isFinite(tile) ? Math.max(50, Math.min(6000, Math.round(tile))) : 800,
+      cutout: Boolean(texture.cutout), png: texture.png, width: size.width, height: size.height,
+    });
+    if (out.length >= USER_MAX) break;
+  }
+  return out;
+}
+// A player's texture as RGBA, read once.
+const userImages = new Map();
+function userImage(texture) {
+  if (!userImages.has(texture.id)) {
+    if (userImages.size > 64) userImages.delete(userImages.keys().next().value);
+    const image = readPng(Buffer.from(texture.png, 'base64'));
+    if (!powerOfTwo(image.width) || !powerOfTwo(image.height)) throw new Error(`${texture.label}: its sides must be powers of two from 8 to 512.`);
+    userImages.set(texture.id, image);
+  }
+  return userImages.get(texture.id);
+}
+// How it's listed with the stages' textures. Edges keep their shape (`fit`).
+function userEntry(texture) {
+  return { id: texture.id, label: texture.label, group: texture.group, ground: texture.ground, scene: null, tile: texture.tile,
+    fit: texture.group === 'edge' ? texture.width / texture.height : 0, cutout: texture.cutout, base: DAYLIGHT, user: true };
+}
+
+// Half the size, each texel the mean of four (alpha too, so see-through edges
+// stay where they are as it shrinks).
+function halve({ width, height, rgba }) {
+  const w = width >> 1, h = height >> 1, out = new Uint8Array(w * h * 4);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) for (let c = 0; c < 4; c++) {
+    const at = (dy, dx) => rgba[((y * 2 + dy) * width + x * 2 + dx) * 4 + c];
+    out[(y * w + x) * 4 + c] = (at(0, 0) + at(0, 1) + at(1, 0) + at(1, 1) + 2) >> 2;
+  }
+  return { width: w, height: h, rgba: out };
+}
+// The texture as the game's own file format (a BTI: a 0x20-byte header, then
+// the picture): CMPR at each size down to 8 texels, see-through where its
+// alpha is under half. Edges are laid once down their height, so they don't
+// repeat that way (clamped).
+function userBti(image, { cutout = false, edge = false } = {}) {
+  const levels = [image];
+  while (levels.length < 7 && levels[levels.length - 1].width >= 16 && levels[levels.length - 1].height >= 16) levels.push(halve(levels[levels.length - 1]));
+  const opaque = !cutout;
+  const data = Buffer.concat(levels.map(level => {
+    if (!opaque) return cmpr(level);
+    const solid = { ...level, rgba: Uint8Array.from(level.rgba) };
+    for (let i = 3; i < solid.rgba.length; i += 4) solid.rgba[i] = 255;
+    return cmpr(solid);
+  }));
+  const header = Buffer.alloc(0x20);
+  header[0x00] = 14;                    // CMPR
+  header[0x01] = cutout ? 1 : 0;        // has see-through texels
+  header.writeUInt16BE(image.width, 0x02);
+  header.writeUInt16BE(image.height, 0x04);
+  header[0x06] = 1;                     // repeat across
+  header[0x07] = edge ? 0 : 1;          // and down, unless laid once
+  header[0x10] = levels.length > 1 ? 1 : 0;
+  header[0x14] = levels.length > 1 ? 5 : 1;  // linear between levels, else linear
+  header[0x15] = 1;
+  header[0x17] = (levels.length - 1) * 8;    // the smallest level (eighths)
+  header[0x18] = levels.length;
+  header.writeUInt32BE(0x20, 0x1c);
+  return Buffer.concat([header, data]);
+}
+
+// The level's own textures for the editor's view: the stage's plainest
+// material (as the export draws them with) showing the texture.
+// `textures` are the level's, as the editor last sent them.
+const userTexturesOf = new WeakMap();  // library -> { base, textures: Map(id -> texture) }
+function setUserTextures(library, base, list) {
+  const textures = cleanUserTextures(list);
+  userTexturesOf.set(library, { base, textures: new Map(textures.map(t => [t.id, t])) });
+  return textures.map(userEntry);
+}
+function userPaletteModel(library, id) {
+  const known = userTexturesOf.get(library), texture = known?.textures.get(id);
+  if (!texture) throw new Error('That texture isn\'t in this level.');
+  let model = null, plain = null;
+  for (const candidate of [known.base, 'dolpic0', ...library.scenes()]) {
+    try { if (!library.files(candidate).get(MAP)) continue; } catch (_) { continue; }
+    model = library.parsed(candidate, MAP);
+    plain = plainTemplate(model);
+    if (plain) break;
+  }
+  if (!plain) throw new Error('No stage on your disc has a material to show it with.');
+  const image = userImage(texture), material = model.materials[plain.index], slot = material.textures[0];
+  const textures = model.textures.slice();
+  textures[slot] = { ...textures[slot], name: texture.id, width: image.width, height: image.height, rgba: image.rgba,
+    wrapS: 1, wrapT: texture.group === 'edge' ? 0 : 1, mipmapped: true };
+  // Its own repeat, not the stage material's (the export undoes that scale too).
+  const own = { ...material, texMatrices: (material.texMatrices || []).map(m => m && { ...m, scale: [1, 1] }) };
+  if (texture.cutout) own.alphaTest = { comp0: 6, ref0: 128, op: 0, comp1: 3, ref1: 255 };
+  const materials = model.materials.slice();
+  materials[plain.index] = own;
+  const tile = texture.tile;
+  const quad = {
+    position: Float32Array.from([0, 0, 0, tile, 0, 0, tile, 0, tile, 0, 0, tile]),
+    normal: Float32Array.from([0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0]),
+    uv: Float32Array.from([0, 0, 1, 0, 1, 1, 0, 1]), uv1: Float32Array.from([0, 0, 1, 0, 1, 1, 0, 1]),
+    color: new Float32Array(16).fill(1), drawIndex: new Uint16Array(4), index: Uint32Array.from([0, 2, 1, 0, 3, 2]),
+    hasColor: true, hasNormal: true, hasUv: true, hasUv1: false, material: plain.index,
+  };
+  return levelModel.bake({ ...model, textures, materials, joints: [{ scale: [1, 1, 1], rotation: [0, 0, 0], translation: [0, 0, 0], parent: -1 }],
+    draw: [{ weighted: false, index: 0 }], envelopes: [], inverseBind: [], shapes: [quad] });
+}
+
 // --- Copied pieces ------------------------------------------------------------------
 
 // A box over a stage (x0, z0, x1, z1): the ground it stands on (the lowest
@@ -329,6 +464,11 @@ function subMesh(mesh, faces, offset = [0, 0, 0]) {
 
 // Models the editor asks for by these refs: palette materials and copied pieces.
 function stageModel(library, ref) {
+  if (isUserTexture(String(ref).slice('palette|'.length)) && String(ref).startsWith('palette|')) {
+    // Kept by its contents (the id is their hash) and the settings it's drawn with.
+    const id = String(ref).slice('palette|'.length), texture = userTexturesOf.get(library)?.textures.get(id);
+    return library.cached(`${ref}|${texture?.cutout ? 1 : 0}|${texture?.group}`, () => userPaletteModel(library, id));
+  }
   if (String(ref).startsWith('palette|')) return library.cached(ref, () => paletteModel(library, String(ref).slice('palette|'.length)));
   if (String(ref).startsWith('prefab|')) return library.cached(ref, () => prefabModel(library, ref));
   return null;
@@ -337,7 +477,8 @@ function stageModel(library, ref) {
 // --- Writing the stage ----------------------------------------------------------------
 
 // The shape of textures laid once over a side or border (build.faces).
-const fitOf = id => PALETTE.find(entry => entry.id === id)?.fit || 0;
+const fitOf = (id, project) => PALETTE.find(entry => entry.id === id)?.fit
+  || (project?.textures || []).map(userEntry).find(entry => entry.id === id)?.fit || 0;
 
 // Pieces and paint as a project holds them, checked.
 const ID = /^[a-z0-9-]{1,40}$/;
@@ -362,7 +503,7 @@ function cleanStage(input, scenes) {
     const textures = { top: ID.test(piece.textures?.top) ? piece.textures.top : 'delfino-tiles', side: ID.test(piece.textures?.side) ? piece.textures.side : 'delfino-white-wall' };
     return [{ uid, kind: piece.kind, label, position: [...piece.position], yaw, size: build.cleanSize(piece.kind, piece.size), textures, ground: ID.test(piece.ground) ? piece.ground : null }];
   });
-  return { texturePaint, pieces, blank: Boolean(input?.blank) };
+  return { texturePaint, pieces, blank: Boolean(input?.blank), textures: cleanUserTextures(input?.textures) };
 }
 const hasStageEdits = project => project.blank || Object.keys(project.texturePaint || {}).length > 0 || (project.pieces || []).length > 0;
 
@@ -387,6 +528,13 @@ function buildMap(library, project) {
   // The material for a new shape painted or built with a palette texture,
   // and the factor from the editor's coordinates to that material's.
   const materialFor = paletteId => {
+    if (isUserTexture(paletteId)) {
+      const texture = (project.textures || []).find(t => t.id === paletteId);
+      if (!texture || plain === null) return null;
+      if (!textures.has(paletteId)) textures.set(paletteId, edit.addTexture(userBti(userImage(texture), { cutout: texture.cutout, edge: texture.group === 'edge' }), 0, texture.id));
+      const scale = texScale(model.materials[plain.index]);
+      return { material: edit.cloneMaterial(plain.index, { texture: textures.get(paletteId), cutout: texture.cutout }), factor: [1 / scale[0], 1 / scale[1]], base: DAYLIGHT, tile: texture.tile };
+    }
     const found = paletteEntry(library, paletteId);
     const source = found?.info && paletteSource(library, found.entry);
     if (!source) return null;
@@ -473,7 +621,7 @@ function buildMap(library, project) {
   for (const piece of project.pieces || []) {
     if (piece.kind === 'prefab') { addPrefab(library, edit, piece, { data, materialFor: null, plain, model, addFaces, textures, toHost, hostMatrices, hostShape, bounds }); continue; }
     const groups = new Map();
-    for (const face of build.faces(piece, fitOf)) {
+    for (const face of build.faces(piece, id => fitOf(id, project))) {
       if (!groups.has(face.texture)) groups.set(face.texture, []);
       groups.get(face.texture).push(face);
     }
@@ -574,7 +722,8 @@ function buildGround(library, project, surfaces, defaults) {
       continue;
     }
     if (!build.solid(piece)) continue;
-    const groundId = piece.ground || palette(library).find(p => p.id === piece.textures.top)?.ground || 'stone';
+    const groundId = piece.ground || palette(library).find(p => p.id === piece.textures.top)?.ground
+      || (project.textures || []).find(t => t.id === piece.textures.top)?.ground || 'stone';
     for (const face of build.faces(piece)) add.push({ p: face.p, code: build.isFloor(face.n) ? codeOf(groundId) : stone });
   }
   if (!project.blank && !add.length) return Object.keys(project.paint || {}).length ? collisionFile.paint(col, project.paint, defaults) : null;
@@ -632,6 +781,6 @@ function invert(m) {
 }
 
 module.exports = {
-  PALETTE, PALETTE_GROUPS, PREFABS, palette, paletteModel, prefabs, prefabModel, prefabRef, parsePrefabRef, stageModel,
+  PALETTE, PALETTE_GROUPS, PREFABS, palette, paletteModel, isUserTexture, cleanUserTextures, userBti, userEntry, setUserTextures, prefabs, prefabModel, prefabRef, parsePrefabRef, stageModel,
   cleanStage, hasStageEdits, buildMap, buildGround, buildSea, openSea, plainTemplate, EMPTY_KEEPS,
 };

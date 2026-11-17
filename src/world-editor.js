@@ -21,6 +21,10 @@ let brush = { id: null, radius: 400 };
 let paintMode = 'texture', textureBrush = 'delfino-sand';
 let buildKind = 'floor', buildTextures = { top: 'delfino-tiles', side: 'delfino-white-wall' };
 let texturePaintVersion = 0;
+// The level's own textures: their settings are in project.textures (and its
+// undo history); their pictures (PNG, base64) are kept here by id, once.
+const texturePngs = new Map();
+let userPalette = [], paletteVersion = 0;
 const BUILD = window.smsWorldBuild;
 let undoStack = [], redoStack = [], dirty = false, busy = false;
 let filter = { text: '', category: 'all', world: 'all' };
@@ -79,10 +83,12 @@ async function openLevel(scene, saved = null) {
   setStatus(`Loading ${sceneLabel(scene)}…`, true);
   try {
     level = await window.sms.worldLoad(scene);
+    texturePngs.clear();
     project = saved ? normalizeProject(saved, scene) : newProject(scene);
     undoStack = []; redoStack = []; dirty = false; selected = null;
     $('world-level').value = scene;
     $('world-name').value = project.name;
+    await syncTextures();
     await showLevel();
     renderOutline();
     renderInspector();
@@ -96,14 +102,32 @@ async function openLevel(scene, saved = null) {
 }
 
 function newProject(scene) {
-  return { format: 'sms-world', version: 1, name: `My ${sceneLabel(scene)}`, base: scene, disc: levels.disc.gameId, edits: {}, added: [], paint: {}, pieces: [], texturePaint: {}, blank: false };
+  return { format: 'sms-world', version: 1, name: `My ${sceneLabel(scene)}`, base: scene, disc: levels.disc.gameId, edits: {}, added: [], paint: {}, pieces: [], texturePaint: {}, blank: false, textures: [] };
 }
 
 function normalizeProject(saved, scene) {
   return {
     ...newProject(scene), ...saved, base: scene, edits: { ...saved.edits }, added: [...(saved.added || [])], paint: { ...saved.paint },
     pieces: (saved.pieces || []).map(piece => ({ ...piece })), texturePaint: { ...saved.texturePaint }, blank: Boolean(saved.blank),
+    textures: (saved.textures || []).flatMap(({ png, ...texture }) => {
+      if (png) texturePngs.set(texture.id, png);
+      return texturePngs.has(texture.id) ? [texture] : [];
+    }),
   };
+}
+
+// The level as it's saved, exported and played: its textures with their pictures.
+const fullProject = () => ({ ...project, textures: (project.textures || []).filter(t => texturePngs.has(t.id)).map(t => ({ ...t, png: texturePngs.get(t.id) })) });
+
+// The level's textures to the launcher (which draws them) and into the pickers.
+async function syncTextures() {
+  const entries = await window.sms.worldTextures(project.base, fullProject().textures);
+  userPalette = entries.map(entry => ({ ...entry, src: `data:image/png;base64,${texturePngs.get(entry.id)}` }));
+  paletteVersion++;
+  texturePaintVersion++;
+  renderTextureSwatches();
+  renderBuildPanel();
+  renderUserTexture();
 }
 
 const sceneLabel = scene => levels?.scenes?.[scene]?.label || scene;
@@ -165,7 +189,8 @@ function objects() {
 }
 
 // Built and copied pieces show up like objects: selectable, movable, turnable.
-const paletteById = id => levels.palette.find(entry => entry.id === id) || null;
+const paletteById = id => levels.palette.find(entry => entry.id === id) || userPalette.find(entry => entry.id === id) || null;
+const paletteIn = group => [...levels.palette, ...userPalette].filter(entry => entry.group === group);
 const fitOf = id => paletteById(id)?.fit || 0;
 function pieceObject(piece) {
   const kind = BUILD.KIND[piece.kind];
@@ -196,8 +221,13 @@ function restore(from, to) {
   if (!from.length || view?.gesturing()) return;
   const file = project.file;
   to.push(JSON.stringify(project));
+  const before = JSON.stringify(project.textures || []);
   project = JSON.parse(from.pop());
   project.file = file;  // undo changes the level, not where it's saved
+  if (JSON.stringify(project.textures || []) !== before) {
+    for (const entry of userPalette) view?.forgetModel(`palette|${entry.id}`);
+    syncTextures().then(() => syncScene());
+  }
   texturePaintVersion++;
   $('world-name').value = project.name;
   dirty = true;
@@ -253,7 +283,7 @@ $('world-save').addEventListener('click', save);
 async function save() {
   if (!project) return;
   try {
-    const result = await window.sms.worldSave(project);
+    const result = await window.sms.worldSave(fullProject());
     project.file = result.file;
     dirty = false;
     syncButtons();
@@ -319,7 +349,7 @@ for (const button of document.querySelectorAll('[data-world-export]'))
     $('world-export-menu').hidePopover();
     if (!project) return;
     try {
-      const result = await window.sms.worldExport(project, button.dataset.worldExport);
+      const result = await window.sms.worldExport(fullProject(), button.dataset.worldExport);
       if (result) flash(result.message);
     } catch (error) { flash(error.message || String(error), true); }
   });
@@ -331,7 +361,7 @@ $('world-play').addEventListener('click', async () => {
   if (tool === 'walk') setTool('select');
   $('world-play').disabled = true;
   flash(`Starting the game in “${project.name}”… It goes through the title and file select by itself, about half a minute.`);
-  try { await window.sms.worldPlay(project); }
+  try { await window.sms.worldPlay(fullProject()); }
   catch (error) { flash(error.message || String(error), true); }
   finally { $('world-play').disabled = false; }
 });
@@ -350,6 +380,8 @@ function syncButtons() {
   }
   $('world-paint-panel').hidden = tool !== 'paint';
   $('world-build-panel').hidden = tool !== 'build';
+  $('world-own-panel').hidden = !(tool === 'build' || (tool === 'paint' && paintMode === 'texture'));
+  if (!$('world-own-panel').hidden) renderUserTexture();
   $('world-paint-texture').hidden = paintMode !== 'texture';
   $('world-paint-ground').hidden = paintMode !== 'ground';
   for (const button of document.querySelectorAll('[data-world-paint-mode]')) button.classList.toggle('active', button.dataset.worldPaintMode === paintMode);
@@ -427,6 +459,7 @@ function swatchUrl(id) {
   if (!swatchCache.has(id)) {
     const entry = paletteById(id);
     if (!entry) return '';
+    if (entry.src) return entry.src;  // the player's own: its picture
     const canvas = document.createElement('canvas');
     canvas.width = entry.thumb.width; canvas.height = entry.thumb.height;
     canvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(entry.thumb.rgba), entry.thumb.width, entry.thumb.height), 0, 0);
@@ -448,11 +481,11 @@ function renderTextureSwatches() {
     img.alt = '';
     if (image) img.src = image;
     button.append(img, label);
-    button.addEventListener('click', () => { textureBrush = id; renderTextureSwatches(); });
+    button.addEventListener('click', () => { textureBrush = id; renderTextureSwatches(); renderUserTexture(); });
     return button;
   };
   for (const group of levels.paletteGroups) {
-    const entries = levels.palette.filter(entry => entry.group === group.id);
+    const entries = paletteIn(group.id);
     if (!entries.length) continue;
     const heading = document.createElement('h3');
     heading.textContent = group.label;
@@ -464,11 +497,13 @@ function renderTextureSwatches() {
 
 // Texture pickers: a list of the palette by group, with the chosen one's image.
 function fillTexturePicker(select, image, value) {
-  if (!select.options.length) {
+  if (select.dataset.version !== String(paletteVersion)) {
+    select.replaceChildren();
+    select.dataset.version = String(paletteVersion);
     for (const group of levels.paletteGroups) {
       const optgroup = document.createElement('optgroup');
       optgroup.label = group.label;
-      for (const entry of levels.palette.filter(e => e.group === group.id)) optgroup.append(new Option(entry.label, entry.id));
+      for (const entry of paletteIn(group.id)) optgroup.append(new Option(entry.user ? `${entry.label} (yours)` : entry.label, entry.id));
       if (optgroup.children.length) select.append(optgroup);
     }
   }
@@ -501,7 +536,98 @@ function renderBuildPanel() {
   fillTexturePicker($('world-build-side'), $('world-build-side-swatch'), buildTextures.side);
 }
 for (const face of ['top', 'side'])
-  $(`world-build-${face}`).addEventListener('change', event => { buildTextures[face] = event.target.value; renderBuildPanel(); syncButtons(); });
+  $(`world-build-${face}`).addEventListener('change', event => { buildTextures[face] = event.target.value; renderBuildPanel(); renderUserTexture(); syncButtons(); });
+
+// --- The level's own textures ------------------------------------------------------
+
+// The texture whose settings show: the paint brush's, else the build top's or
+// sides', if one of them is the player's.
+const ownShown = () => [tool === 'paint' ? textureBrush : null, buildTextures.top, buildTextures.side].map(id => project?.textures?.find(t => t.id === id)).find(Boolean) || null;
+
+function renderUserTexture() {
+  const texture = ownShown();
+  $('world-texture-own').hidden = !texture;
+  if (!texture) return;
+  const entry = paletteById(texture.id);
+  $('world-texture-own-image').src = entry?.src || '';
+  $('world-texture-own-size').textContent = `${texture.width} × ${texture.height} pixels`;
+  $('world-texture-name').value = texture.label;
+  const group = $('world-texture-group');
+  if (!group.options.length) for (const g of levels.paletteGroups) group.append(new Option(g.label, g.id));
+  group.value = texture.group;
+  const ground = $('world-texture-ground');
+  if (!ground.options.length) for (const s of surfaces) ground.append(new Option(s.label, s.id));
+  ground.value = texture.ground;
+  $('world-texture-tile').value = texture.tile;
+  $('world-texture-tile-value').textContent = `${(texture.tile / 100).toFixed(texture.tile % 100 ? 1 : 0)} m`;
+  $('world-texture-cutout').checked = texture.cutout;
+}
+
+// A setting of the shown texture changed: through the undo history, then drawn again.
+function setUserTexture(label, apply) {
+  const texture = ownShown();
+  if (!texture) return;
+  const id = texture.id, drawn = JSON.stringify([texture.cutout, texture.group]);
+  change(label, () => apply(project.textures.find(t => t.id === id)));
+  const now = project.textures.find(t => t.id === id);
+  if (JSON.stringify([now.cutout, now.group]) !== drawn) view?.forgetModel(`palette|${id}`);
+  syncTextures().then(() => syncScene());
+}
+$('world-texture-name').addEventListener('change', event => {
+  const label = event.target.value.trim().slice(0, 40);
+  if (label) setUserTexture('Rename a texture', t => { t.label = label; });
+});
+$('world-texture-group').addEventListener('change', event => setUserTexture('Move a texture', t => { t.group = event.target.value; }));
+$('world-texture-ground').addEventListener('change', event => setUserTexture('Change a texture\'s footsteps', t => { t.ground = event.target.value; }));
+$('world-texture-tile').addEventListener('input', event => { $('world-texture-tile-value').textContent = `${(Number(event.target.value) / 100).toFixed(1)} m`; });
+$('world-texture-tile').addEventListener('change', event => setUserTexture('Resize a texture', t => { t.tile = Number(event.target.value); }));
+$('world-texture-cutout').addEventListener('change', event => setUserTexture('Make a texture see-through', t => { t.cutout = event.target.checked; }));
+
+$('world-texture-add').addEventListener('click', async () => {
+  if (!project) return;
+  if ((project.textures || []).length >= 32) { flash('A level can have 32 textures of its own. Remove one to add another.', true); return; }
+  let picked;
+  try { picked = await window.sms.worldTextureImport(); } catch (error) { flash(error.message || String(error), true); return; }
+  if (!picked) return;
+  if (project.textures.some(t => t.id === picked.id)) { flash('That picture is already one of this level\'s textures.'); useOwn(picked.id); return; }
+  texturePngs.set(picked.id, picked.png);
+  change('Add a texture', () => {
+    project.textures.push({ id: picked.id, label: picked.label, group: 'ground', ground: 'stone', tile: 800, cutout: picked.cutout, width: picked.width, height: picked.height });
+  });
+  await syncTextures();
+  useOwn(picked.id);
+  if (picked.resized) flash(`Added “${picked.label}”, made ${picked.width} × ${picked.height} pixels (from ${picked.original.width} × ${picked.original.height}): the game needs sides of 8, 16, 32 … 512.`);
+  else flash(`Added “${picked.label}”.`);
+});
+// The new or picked texture in hand: the paint brush, or the build top.
+function useOwn(id) {
+  if (tool === 'build') { buildTextures.top = id; renderBuildPanel(); }
+  else { textureBrush = id; renderTextureSwatches(); }
+  renderUserTexture();
+  syncButtons();
+}
+
+$('world-texture-remove').addEventListener('click', () => {
+  const texture = ownShown();
+  if (!texture) return;
+  const id = texture.id;
+  const used = Object.values(project.texturePaint).filter(v => v === id).length + project.pieces.filter(p => p.textures?.top === id || p.textures?.side === id).length;
+  if (used && !confirm(`Remove “${texture.label}”? Where it's used, the stage goes back to its own look and built pieces take the first textures in the list. You can undo this.`)) return;
+  change('Remove a texture', () => {
+    project.textures = project.textures.filter(t => t.id !== id);
+    for (const [key, value] of Object.entries(project.texturePaint)) if (value === id) delete project.texturePaint[key];
+    const ground = levels.palette.find(e => e.group === 'ground')?.id, wall = levels.palette.find(e => e.group === 'wall')?.id || ground;
+    for (const piece of project.pieces) {
+      if (piece.textures?.top === id) piece.textures.top = ground;
+      if (piece.textures?.side === id) piece.textures.side = wall;
+    }
+    texturePaintVersion++;
+  });
+  if (textureBrush === id) textureBrush = levels.palette[0]?.id || null;
+  if (buildTextures.top === id) buildTextures.top = levels.palette.find(e => e.group === 'ground')?.id;
+  if (buildTextures.side === id) buildTextures.side = levels.palette.find(e => e.group === 'wall')?.id;
+  syncTextures().then(() => syncScene());
+});
 
 const buildPieceSpec = () => ({ kind: buildKind, size: BUILD.KIND[buildKind].size, textures: { ...buildTextures }, label: BUILD.KIND[buildKind].label });
 
@@ -866,7 +992,13 @@ function createView(canvas) {
   const textures = new Map();
   function modelFor(ref) {
     if (!ref) return Promise.resolve(null);
-    if (!models.has(ref)) models.set(ref, window.sms.worldModel(ref).then(build).catch(error => { console.warn(`World editor: ${ref}: ${error.message || error}`); return null; }));
+    if (!models.has(ref)) models.set(ref, window.sms.worldModel(ref).then(build).catch(error => {
+      console.warn(`World editor: ${ref}: ${error.message || error}`);
+      // A level's own texture asked for before the launcher had it (an undo
+      // bringing it back): asked again next time.
+      if (ref.startsWith('palette|user-')) models.delete(ref);
+      return null;
+    }));
     return models.get(ref);
   }
   function build(data) {
@@ -1308,7 +1440,7 @@ function createView(canvas) {
   // Built pieces are drawn where they are (their textures laid over the
   // world), so they're made again when they move or change.
   const builtPiece = object => object.piece && object.piece.kind !== 'prefab';
-  const pieceRef = piece => `piece:${JSON.stringify([piece.kind, piece.size, piece.textures, piece.position, piece.yaw])}`;
+  const pieceRef = piece => `piece:${JSON.stringify([piece.kind, piece.size, piece.textures, piece.position, piece.yaw, paletteVersion])}`;
   function dropEntry(entry) {
     things.remove(entry.root);
     release(entry.root);
@@ -1964,6 +2096,12 @@ function createView(canvas) {
 
   return {
     setLevel, syncObjects, frame, focus, groundBelow, walk, stopWalk, setGhost, preview, repaintAll, setStage, setBuildGhost, endCopy,
+    // A model to read again (a texture of the level's own drawn differently now).
+    forgetModel(ref) {
+      const promise = models.get(ref);
+      models.delete(ref);
+      promise?.then(model => model?.parts.forEach(({ geometry }) => geometry.dispose()));
+    },
     setOverlay(on) { overlayOn = on; if (overlay) overlay.mesh.visible = on; brushRing.visible = brushRing.visible && tool === 'paint'; },
     setBrushRadius(radius) { brushRadius = radius; },
     gesturing: () => Boolean(drag?.kind === 'move' || drag?.kind === 'gizmo' || painting),

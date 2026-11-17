@@ -1684,11 +1684,40 @@ async function worldPlay(input) {
   } });
 }
 
+// A picture of the player's as a texture for their level: read (PNG, JPEG,
+// WebP or BMP), each side made the nearest power of two from 8 to 512 (keeping
+// its shape as near as that allows), and kept as a PNG.
+const worldTextureSide = v => 2 ** Math.max(3, Math.min(9, Math.round(Math.log2(Math.max(1, v)))));
+async function worldTextureImport(event) {
+  const chosen = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), { title: 'Add your own texture', properties: ['openFile'],
+    filters: [{ name: 'Pictures', extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp'] }] });
+  if (chosen.canceled || !chosen.filePaths[0]) return null;
+  const file = chosen.filePaths[0];
+  if (fs.statSync(file).size > 64 << 20) throw new Error('That picture is too large.');
+  const image = nativeImage.createFromPath(file);
+  if (image.isEmpty()) throw new Error('That file isn\'t a picture the launcher can read (PNG, JPEG, WebP or BMP).');
+  const size = image.getSize(), width = worldTextureSide(size.width), height = worldTextureSide(size.height);
+  const resized = width === size.width && height === size.height ? image : image.resize({ width, height, quality: 'best' });
+  // Chromium's pixels: blue, green, red, alpha, with colour multiplied by alpha.
+  const bgra = resized.toBitmap(), rgba = new Uint8Array(width * height * 4);
+  let seeThrough = false;
+  for (let i = 0; i < rgba.length; i += 4) {
+    const a = bgra[i + 3], undo = a ? 255 / a : 0;
+    rgba[i] = Math.min(255, Math.round(bgra[i + 2] * undo)); rgba[i + 1] = Math.min(255, Math.round(bgra[i + 1] * undo));
+    rgba[i + 2] = Math.min(255, Math.round(bgra[i] * undo)); rgba[i + 3] = a;
+    if (a < 128) seeThrough = true;
+  }
+  const png = require('./texture-image').writePng(width, height, rgba);
+  const label = path.basename(file, path.extname(file)).replace(/[_-]+/g, ' ').replace(/[^\w ()'.,-]+/g, '').trim().slice(0, 40) || 'My texture';
+  return { id: `user-${crypto.createHash('sha1').update(png).digest('hex').slice(0, 12)}`, label, png: png.toString('base64'), width, height, cutout: seeThrough,
+    resized: width !== size.width || height !== size.height, original: size };
+}
+
 async function worldImport(event) {
   const chosen = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), { title: 'Import a level', properties: ['openFile'], filters: [{ name: 'World editor level', extensions: ['smsworld'] }] });
   if (chosen.canceled || !chosen.filePaths[0]) return null;
   const stat = fs.statSync(chosen.filePaths[0]);
-  if (stat.size > 20 << 20) throw new Error('That file is too large to be a level.');
+  if (stat.size > 64 << 20) throw new Error('That file is too large to be a level.');
   let input;
   try { input = JSON.parse(fs.readFileSync(chosen.filePaths[0], 'utf8')); } catch (_) { throw new Error('That file isn\'t a level from the world editor.'); }
   return worldProject(input);
@@ -2617,6 +2646,9 @@ function registerHandlers() {
   ipcMain.handle('world-delete', (_event, file) => { fs.rmSync(worldLevelFile(file), { force: true }); });
   ipcMain.handle('world-import', event => worldImport(event));
   ipcMain.handle('world-release', () => worldLibrary?.release());
+  ipcMain.handle('world-texture-import', event => worldTextureImport(event));
+  // The level's own textures, for the editor to draw them (palette|user-… models) and list them.
+  ipcMain.handle('world-textures', (_event, base, textures) => worldStage.setUserTextures(worldLib(), String(base || ''), textures));
   ipcMain.handle('world-export', (event, project, kind) => worldExport(event, project, kind));
   ipcMain.handle('mario-model', () => ({ model: marioFrom(port.validateRom(config.rom)), look: config.marioLook }));
   // The Characters page: the launcher's characters (character-roster.js), each made from the player's disc

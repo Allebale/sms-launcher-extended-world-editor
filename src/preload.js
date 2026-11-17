@@ -36,6 +36,8 @@ contextBridge.exposeInMainWorld('sms', {
   worldExport: (project, kind) => ipcRenderer.invoke('world-export', project, kind),
   worldPlay: project => ipcRenderer.invoke('world-play', project),
   worldRelease: () => ipcRenderer.invoke('world-release'),
+  worldTextureImport: () => ipcRenderer.invoke('world-texture-import'),
+  worldTextures: (base, textures) => ipcRenderer.invoke('world-textures', base, textures),
   saveMarioLook: look => ipcRenderer.invoke('save-mario-look', look),
   saveMarioOutfits: outfits => ipcRenderer.invoke('save-mario-outfits', outfits),
   outfitPortraits: keys => ipcRenderer.invoke('outfit-portraits', keys),

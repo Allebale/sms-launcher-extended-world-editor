@@ -299,3 +299,39 @@ test('a message bank takes a new text for one message, or for all of them, and k
   assert.equal(renamed.readUInt32BE(8), renamed.length);
   assert.deepEqual(read(world.setMessages(file, {}, '')), ['', '', '']);
 });
+
+test('players\' own textures are kept checked, and written as the game\'s compressed format with smaller levels', () => {
+  const stage = require('../src/world-stage');
+  const { writePng } = require('../src/texture-image');
+  const { decodeBti } = require('../src/j3d');
+  // A 64 × 32 picture: red on the left, blue on the right, the right half's top row see-through.
+  const w = 64, h = 32, rgba = new Uint8Array(w * h * 4);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) rgba.set(x < 32 ? [220, 30, 20, 255] : [20, 40, 230, y < 8 ? 0 : 255], (y * w + x) * 4);
+  const png = writePng(w, h, rgba).toString('base64');
+  const odd = writePng(48, 32, new Uint8Array(48 * 32 * 4)).toString('base64');
+  const clean = world.cleanProject({ format: 'sms-world', base: 'home', textures: [
+    { id: 'user-0123456789ab', label: 'Bricks', group: 'wall', ground: 'wood', tile: 5, cutout: 1, png },
+    { id: 'user-0123456789ab', label: 'Again', png },
+    { id: 'user-ffffffffffff', label: 'Not a power of two', png: odd },
+    { id: '../evil', label: 'Bad', png },
+    { id: 'user-aaaaaaaaaaaa', label: 'Defaults', group: 'sky', ground: '<b>', png },
+  ] }, ['home']);
+  assert.deepEqual(clean.textures.map(t => t.id), ['user-0123456789ab', 'user-aaaaaaaaaaaa']);
+  assert.deepEqual([clean.textures[0].group, clean.textures[0].ground, clean.textures[0].tile, clean.textures[0].cutout, clean.textures[0].width], ['wall', 'wood', 50, true, 64]);
+  assert.deepEqual([clean.textures[1].group, clean.textures[1].ground, clean.textures[1].tile], ['ground', 'stone', 800]);
+  assert.equal(stage.userEntry({ ...clean.textures[0], group: 'edge' }).fit, 2);
+
+  const bti = stage.userBti({ width: w, height: h, rgba }, { cutout: true });
+  assert.equal(bti[0], 14);
+  assert.deepEqual([bti.readUInt16BE(2), bti.readUInt16BE(4), bti[0x18], bti[0x17]], [64, 32, 3, 16]);  // 64×32, 32×16, 16×8
+  assert.equal(bti.length, 0x20 + (64 * 32 + 32 * 16 + 16 * 8) / 2);
+  const back = decodeBti(bti, 0);
+  const texel = (x, y) => Array.from(back.rgba.subarray((y * w + x) * 4, (y * w + x) * 4 + 4));
+  assert.ok(texel(5, 20)[0] > 180 && texel(5, 20)[2] < 60);
+  assert.ok(texel(50, 20)[2] > 180 && texel(50, 20)[3] === 255);
+  assert.equal(texel(50, 2)[3], 0);
+  // Opaque ones stay opaque, whatever the picture's alpha.
+  const solid = decodeBti(stage.userBti({ width: w, height: h, rgba }), 0);
+  assert.equal(solid.rgba[(2 * w + 50) * 4 + 3], 255);
+  assert.equal(stage.userBti({ width: 8, height: 8, rgba: new Uint8Array(256) })[0x18], 1);
+});

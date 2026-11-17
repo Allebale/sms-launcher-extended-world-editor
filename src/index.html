@@ -222,6 +222,20 @@
             <div class="world-build-actions"><button id="world-copy-piece" class="subtle" title="Drag a box over part of the stage, such as a building, to place copies of it">Copy part of the stage</button><button id="world-empty-stage" class="subtle" title="Take away the stage's ground, buildings and objects, keeping its sea and sky">Start from an empty stage</button></div>
             <p class="helper">Whole buildings from Delfino are in the catalog under Stage pieces.</p>
           </div>
+          <div id="world-own-panel" class="world-panel" hidden>
+            <h2>Your textures</h2>
+            <p class="helper">Use your own pictures (PNG or JPEG) to paint and build with. They're saved in the level file, so they go wherever it goes.</p>
+            <button id="world-texture-add" class="subtle">Add your own texture…</button>
+            <div id="world-texture-own" class="world-texture-own" hidden>
+              <div class="world-texture-own-head"><img id="world-texture-own-image" alt=""><small id="world-texture-own-size"></small></div>
+              <label class="world-field"><span>Name</span><input id="world-texture-name" maxlength="40" spellcheck="false"></label>
+              <label class="world-field"><span>Listed with</span><select id="world-texture-group"></select></label>
+              <label class="world-field"><span>Footsteps</span><select id="world-texture-ground"></select></label>
+              <label class="world-range"><span>One repeat across <b id="world-texture-tile-value"></b></span><input id="world-texture-tile" type="range" min="100" max="4000" step="50"></label>
+              <label class="world-check"><input id="world-texture-cutout" type="checkbox"><span>See-through where the picture is</span></label>
+              <button id="world-texture-remove" class="subtle danger">Remove this texture</button>
+            </div>
+          </div>
           <div class="world-panel">
             <div id="world-inspector-empty">
               <h2>Stage</h2>
