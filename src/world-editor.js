@@ -29,6 +29,10 @@ let userPalette = [], paletteVersion = 0;
 // and triangle counts; their parts (arrays and pictures, base64) are kept here.
 const modelData = new Map();
 let catalogBase = null;
+// Retextures: project.retextures maps "file|texture name" to { id } (a
+// picture in texturePngs); decoded once each for the 3D view.
+const retextureImages = new Map();  // picture id -> Promise<{ width, height, data }>
+let pictureCounter = 0;
 // Pieces of these kinds are drawn from a model; the rest are built from their size and textures.
 const MODEL_PIECES = new Set(['prefab', 'model']);
 const BUILD = window.smsWorldBuild;
@@ -99,6 +103,7 @@ async function openLevel(scene, saved = null) {
     await syncTextures();
     await syncModels();
     await showLevel();
+    await syncRetextures();
     renderOutline();
     renderInspector();
     syncButtons();
@@ -111,7 +116,7 @@ async function openLevel(scene, saved = null) {
 }
 
 function newProject(scene) {
-  return { format: 'sms-world', version: 1, name: `My ${sceneLabel(scene)}`, base: scene, disc: levels.disc.gameId, edits: {}, added: [], paint: {}, pieces: [], texturePaint: {}, blank: false, textures: [], models: [] };
+  return { format: 'sms-world', version: 1, name: `My ${sceneLabel(scene)}`, base: scene, disc: levels.disc.gameId, edits: {}, added: [], paint: {}, pieces: [], texturePaint: {}, blank: false, textures: [], models: [], retextures: {} };
 }
 
 function normalizeProject(saved, scene) {
@@ -126,6 +131,10 @@ function normalizeProject(saved, scene) {
       if (model.parts) modelData.set(model.id, model);
       return modelData.has(model.id) ? [{ id: model.id, label: model.label, triangles: model.triangles, size: model.size }] : [];
     }),
+    retextures: Object.fromEntries(Object.entries(saved.retextures || {}).flatMap(([key, texture]) => {
+      if (texture?.png) { const id = `loaded-${pictureCounter++}`; texturePngs.set(id, texture.png); return [[key, { id }]]; }
+      return texture?.id && texturePngs.has(texture.id) ? [[key, { id: texture.id }]] : [];
+    })),
   };
 }
 
@@ -133,7 +142,26 @@ function normalizeProject(saved, scene) {
 const fullProject = () => ({
   ...project, textures: (project.textures || []).filter(t => texturePngs.has(t.id)).map(t => ({ ...t, png: texturePngs.get(t.id) })),
   models: (project.models || []).filter(m => modelData.has(m.id)).map(m => ({ ...modelData.get(m.id), label: m.label })),
+  retextures: Object.fromEntries(Object.entries(project.retextures || {}).filter(([, t]) => texturePngs.has(t.id)).map(([key, t]) => [key, { png: texturePngs.get(t.id) }])),
 });
+
+// A picture as pixels, for the 3D view.
+function retextureImage(id) {
+  if (!retextureImages.has(id)) {
+    const bytes = Uint8Array.from(atob(texturePngs.get(id) || ''), c => c.charCodeAt(0));
+    retextureImages.set(id, createImageBitmap(new Blob([bytes], { type: 'image/png' }), { premultiplyAlpha: 'none', colorSpaceConversion: 'none' }).then(bitmap => {
+      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height), context = canvas.getContext('2d', { willReadFrequently: true });
+      context.drawImage(bitmap, 0, 0);
+      return { width: bitmap.width, height: bitmap.height, data: new Uint8Array(context.getImageData(0, 0, bitmap.width, bitmap.height).data.buffer) };
+    }));
+  }
+  return retextureImages.get(id);
+}
+// The level's retextures into the 3D view.
+async function syncRetextures() {
+  const entries = await Promise.all(Object.entries(project.retextures || {}).map(async ([key, t]) => [key, await retextureImage(t.id).catch(() => null)]));
+  view?.setRetextures(new Map(entries.filter(([, image]) => image)));
+}
 
 // The level's models to the launcher (which draws them) and into the catalog, under Your models.
 async function syncModels() {
@@ -252,6 +280,7 @@ function restore(from, to) {
   project = JSON.parse(from.pop());
   project.file = file;  // undo changes the level, not where it's saved
   if (JSON.stringify(project.models || []) !== beforeModels) syncModels();
+  syncRetextures();
   if (JSON.stringify(project.textures || []) !== before) {
     for (const entry of userPalette) view?.forgetModel(`palette|${entry.id}`);
     syncTextures().then(() => syncScene());
@@ -904,6 +933,7 @@ function renderInspector() {
   $('world-delete').disabled = $('world-duplicate').disabled = isStart(object);
   $('world-reset').disabled = Boolean(object.added) || !object.edited;
   // Pieces turn about the vertical only; built ones have a size and textures instead of a scale.
+  renderRetextures(object);
   const built = object.piece && !MODEL_PIECES.has(object.piece.kind), own = object.piece?.kind === 'model';
   $('world-scale-row').hidden = Boolean(object.piece) && !own;
   $('world-model-fields').hidden = !own;
@@ -921,6 +951,58 @@ function renderInspector() {
     fillTexturePicker($('world-piece-top'), $('world-piece-top-swatch'), object.piece.textures.top);
     fillTexturePicker($('world-piece-side'), $('world-piece-side-swatch'), object.piece.textures.side);
   }
+}
+
+// --- Retexturing what's placed ----------------------------------------------------
+
+// The textures a placed thing shows that can take another picture: its model
+// file's own (and an NPC's parts'), not the shared ones every stage has.
+const retexturable = new Map();  // model ref -> Promise<[{ key, name, width, height, png }]>
+let retextureShown = null;
+function renderRetextures(object) {
+  const ref = !object?.piece && object?.model && !/^(common|mario)\|/.test(object.model) ? object.model : null;
+  const box = $('world-retexture');
+  if (!ref) { box.hidden = true; retextureShown = null; return; }
+  if (!retexturable.has(ref)) retexturable.set(ref, window.sms.worldRetexturable(ref).catch(() => []));
+  retextureShown = ref;
+  retexturable.get(ref).then(list => {
+    if (retextureShown !== ref) return;
+    box.hidden = !list.length;
+    const rows = list.map(texture => {
+      const row = document.createElement('div'), mine = project.retextures?.[texture.key];
+      row.className = `world-retexture-row${mine ? ' changed' : ''}`;
+      const img = document.createElement('img');
+      img.alt = '';
+      img.src = `data:image/png;base64,${mine ? texturePngs.get(mine.id) : texture.png}`;
+      const text = document.createElement('div');
+      text.innerHTML = '<strong></strong><small></small><div class="world-retexture-buttons"></div>';
+      text.querySelector('strong').textContent = texture.name;
+      text.querySelector('strong').title = `${texture.name} in ${texture.file}`;
+      text.querySelector('small').textContent = `${texture.width} × ${texture.height}${mine ? ' · yours' : ''}`;
+      const buttons = text.querySelector('.world-retexture-buttons');
+      const button = (label, title, action) => { const b = document.createElement('button'); b.className = 'subtle'; b.textContent = label; b.title = title; b.addEventListener('click', action); buttons.append(b); };
+      button('Replace…', 'Give it a picture of yours (PNG, JPEG, WebP or BMP)', () => replaceTexture(texture));
+      button('Save', 'Save this texture as a PNG, to paint over', async () => {
+        try { const saved = await window.sms.worldSavePicture(mine ? texturePngs.get(mine.id) : texture.png, texture.name); if (saved) flash('Saved the texture.'); }
+        catch (error) { flash(error.message || String(error), true); }
+      });
+      if (mine) button('Undo', 'Put the game\'s own texture back', () => { change('Put a texture back', () => { delete project.retextures[texture.key]; }); syncRetextures(); });
+      row.append(img, text);
+      return row;
+    });
+    $('world-retexture-list').replaceChildren(...rows);
+  });
+}
+async function replaceTexture(texture) {
+  let picked;
+  try { picked = await window.sms.worldTextureImport(); } catch (error) { flash(error.message || String(error), true); return; }
+  if (!picked) return;
+  texturePngs.set(picked.id, picked.png);
+  change('Retexture', () => { project.retextures = { ...project.retextures, [texture.key]: { id: picked.id } }; });
+  syncRetextures();
+  const odd = picked.width / picked.height !== texture.width / texture.height;
+  flash(odd ? `Retextured ${texture.name}. Your picture's shape differs from the texture's (${texture.width} × ${texture.height}), so it may look stretched.`
+    : `Retextured ${texture.name}. Everything in this level using it changes.`);
 }
 
 const selectedPiece = () => { const object = selected && objectById(selected); return object?.piece && !MODEL_PIECES.has(object.piece.kind) ? object.piece : null; };
@@ -1077,6 +1159,15 @@ function createView(canvas) {
   // Models are shared: each model ref is read and turned into meshes once.
   const models = new Map();
   const textures = new Map();
+  // Textures players can retexture, by "file|name": the view's textures showing
+  // them, each with its own picture to go back to; and the pictures shown now.
+  const retextureTargets = new Map(), retextured = new Map();
+  function showRetexture(texture) {
+    const { key, original } = texture.userData;
+    const image = retextured.get(key);
+    texture.image = image ? { data: image.data, width: image.width, height: image.height } : original;
+    texture.needsUpdate = true;
+  }
   function modelFor(ref) {
     if (!ref) return Promise.resolve(null);
     if (!models.has(ref)) models.set(ref, window.sms.worldModel(ref).then(build).catch(error => {
@@ -1104,6 +1195,13 @@ function createView(canvas) {
       texture.anisotropy = 4;
       texture.needsUpdate = true;
       textures.set(texture, true);
+      if (source.file) {
+        const key = `${source.file}|${source.name}`;
+        texture.userData = { key, original: texture.image };
+        if (!retextureTargets.has(key)) retextureTargets.set(key, new Set());
+        retextureTargets.get(key).add(texture);
+        if (retextured.has(key)) showRetexture(texture);
+      }
       return texture;
     });
     const parts = data.meshes.map(mesh => {
@@ -2199,6 +2297,13 @@ function createView(canvas) {
 
   return {
     setLevel, syncObjects, frame, focus, groundBelow, walk, stopWalk, setGhost, preview, repaintAll, setStage, setBuildGhost, endCopy,
+    // The level's retextures ("file|name" -> { width, height, data }), shown at once.
+    setRetextures(map) {
+      const changed = new Set([...retextured.keys(), ...map.keys()]);
+      retextured.clear();
+      for (const [key, image] of map) retextured.set(key, image);
+      for (const key of changed) for (const texture of retextureTargets.get(key) || []) showRetexture(texture);
+    },
     // A model to read again (a texture of the level's own drawn differently now).
     forgetModel(ref) {
       const promise = models.get(ref);

@@ -211,7 +211,7 @@ function bake(model, { pose = null, skipShapes = null } = {}) {
       translucent: group.translucent, blendSrc: group.blendSrc, blendDst: group.blendDst, doubleSided: group.doubleSided, tev: group.tev });
   }
   const used = new Set(meshes.flatMap(m => m.tev ? m.tev.stages.map(stage => stage.texMap) : []).filter(t => t >= 0));
-  const textures = model.textures.map((t, i) => used.has(i) ? { width: t.width, height: t.height, rgba: t.rgba, wrapS: t.wrapS, wrapT: t.wrapT, name: t.name, mipmapped: t.mipmapped } : null);
+  const textures = model.textures.map((t, i) => used.has(i) ? { width: t.width, height: t.height, rgba: t.rgba, wrapS: t.wrapS, wrapT: t.wrapT, name: t.name, mipmapped: t.mipmapped, file: t.file } : null);
   if (!meshes.length) return { meshes, textures, bounds: { min: [0, 0, 0], max: [0, 0, 0] } };
   return { meshes, textures, bounds: { min, max } };
 }

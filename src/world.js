@@ -14,6 +14,7 @@ const collisionFile = require('./collision');
 const j3d = require('./j3d');
 const levelModel = require('./level-model');
 const stage = require('./world-stage');
+const write = require('./j3d-write');
 const DATA = require('./world-data.json');
 
 const CATALOG_VERSION = 10;
@@ -296,6 +297,7 @@ class Library {
     const data = files.get(file);
     if (!data) throw new Error(`The disc has no ${file} in ${scene}.`);
     const model = j3d.parseBmd(data);
+    tagTextures(model, scene, file);
     swapTextures(this, model, scene, file.split('/')[0]);
     materialTableFor(this, model, scene, file);
     // Mario's goop shows where a mask beats konst colour 0's alpha, like NPCs'; his is clean too (TMario's draw).
@@ -378,6 +380,51 @@ const TEXTURE_SWAPS = {
   i_mom_mino_dummyi4: { file: 'montemcommon/i_mom_mino_rgba.bti' }, i_mow_mino_dummyi4: { file: 'montewcommon/i_mow_mino_rgba.bti' },
   j_jellyfish_dummy: { file: 'marejellyfish/j_kurage.bti' },
 };
+// The model file each of a stage's own textures is in, so players can give
+// the stage's copy another picture (retextures, applied when the stage is
+// exported). Textures the game swaps in, or a material table brings, aren't
+// tagged: they aren't the file's own. Nor are the shared ones (mario, common).
+function tagTextures(model, scene, file) {
+  if (!file || scene === 'mario' || scene === 'common') return;
+  for (const texture of model.textures) if (texture && !/_dummy/i.test(texture.name)) texture.file = file;
+}
+
+// The textures a placed thing shows that players can retexture: { key: "file|name", file, name, width, height, image }.
+function retexturable(library, ref) {
+  const baked = library.model(ref), seen = new Set(), out = [];
+  for (const texture of baked.textures || []) {
+    if (!texture?.file) continue;
+    const key = `${texture.file}|${texture.name}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ key, file: texture.file, name: texture.name, width: texture.width, height: texture.height, rgba: texture.rgba });
+  }
+  return out;
+}
+
+// Retextures into a stage archive's model files: each file once, every slot with that texture's name.
+function applyRetextures(tree, retextures) {
+  const byFile = new Map();
+  for (const [key, texture] of Object.entries(retextures || {})) {
+    const [file, name] = key.split('|');
+    if (!byFile.has(file)) byFile.set(file, {});
+    const image = stage.retextureImage(texture);
+    // Smooth see-through edges keep their alpha (RGBA8); others pack small (CMPR, which keeps cut-outs).
+    const soft = image.rgba.some((v, i) => i % 4 === 3 && v > 16 && v < 239);
+    byFile.get(file)[name] = { format: soft ? 6 : 14, ...image };
+  }
+  let changed = 0;
+  for (const [file, replacements] of byFile) {
+    const found = archive.treeFile(tree, file);
+    if (!found) continue;
+    const data = Buffer.from(found.file.data);
+    if (data.toString('ascii', 0, 4) !== 'J3D2') continue;
+    archive.treePut(tree, originalPath(tree, file.toLowerCase()), write.assemble(data, { TEX1: write.tex1(write.sectionOf(data, 'TEX1'), replacements) }));
+    changed++;
+  }
+  return changed;
+}
+
 function swapTextures(library, model, scene, folder, donor = null) {
   model.textures.forEach((texture, i) => {
     const name = texture.name.toLowerCase(), swap = TEXTURE_SWAPS[name];
@@ -573,6 +620,7 @@ function addNpcParts(library, baked, body, scene, bodyFile, npc, pose = null) {
     const data = folders.map(folder => library.findFile(`${folder}/${part.bmd.toLowerCase()}`, scene)).find(Boolean);
     if (!data) return;
     const model = j3d.parseBmd(data);
+    tagTextures(model, scene, folders.map(folder => `${folder}/${part.bmd.toLowerCase()}`).find(f => library.findFile(f, scene) === data));
     if (part.bmt) {
       bmt ??= (() => { const table = library.findFile('marecommon/mare.bmt', scene); return table ? j3d.parseBmt(table) : null; })();
       if (bmt) useMaterialTable(model, bmt);
@@ -1268,6 +1316,7 @@ function buildArchive(library, project) {
       copied++;
     }
   }
+  applyRetextures(tree, project.retextures);
   return { data: archive.yaz0Encode(archive.writeTree(tree)), copied };
 }
 
@@ -1372,5 +1421,5 @@ function originalPath(tree, file) {
 module.exports = {
   Library, WORLDS, CATEGORIES, SURFACES, GROUND_TYPES, CAMERA_TYPES, CATALOG_VERSION, PROJECT_FORMAT, FLOOR_NORMAL, worldOf, sceneLabel, buildCatalog, loadLevel, cleanProject,
   buildScene, buildCollision, buildModel, buildArchive, stageTable, stageStart, playTexts, setMessages, readTransform, writeTransform, describe, categoryOf, labelOf, humanize, fitManagers,
-  paintNpc, parseNpcLook, NPC_TYPES,
+  paintNpc, parseNpcLook, NPC_TYPES, retexturable, applyRetextures,
 };

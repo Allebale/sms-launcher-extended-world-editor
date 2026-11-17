@@ -1208,6 +1208,16 @@ small.renderer-warning { color: #a8481a; }
 .world-build-actions { display: grid; gap: 6px; margin: 10px 0 8px; }
 #world-texture-add, #world-model-add { width: 100%; padding: 7px 9px; font-size: 11px; }
 .world-model-fields { display: grid; gap: 7px; margin-top: 8px; }
+.world-retexture { margin-top: 10px; }
+.world-retexture h3 { margin: 0 0 4px; color: #687f82; font-size: 10px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.world-retexture-list { display: grid; gap: 5px; max-height: 260px; overflow: auto; }
+.world-retexture-row { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 7px; align-items: center; padding: 4px; border: 1px solid #dfe8e7; border-radius: 8px; background: #fff; }
+.world-retexture-row img { width: 34px; height: 34px; border-radius: 5px; box-shadow: inset 0 0 0 1px #0002; image-rendering: pixelated; object-fit: contain; background: repeating-conic-gradient(#eee 0 25%, #fff 0 50%) 0 0 / 8px 8px; }
+.world-retexture-row strong { display: block; overflow: hidden; color: #2f4a50; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.world-retexture-row small { color: #7d8f94; font-size: 9px; }
+.world-retexture-row.changed { border-color: #158188; }
+.world-retexture-buttons { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.world-retexture-buttons button { padding: 3px 6px; font-size: 10px; }
 #world-model-remove { justify-self: start; padding: 6px 9px; font-size: 11px; }
 .world-texture-own { display: grid; gap: 7px; margin-top: 10px; }
 .world-texture-own-head { display: flex; align-items: center; gap: 9px; }

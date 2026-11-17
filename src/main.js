@@ -1734,6 +1734,17 @@ async function worldModelImport(event) {
   return worldModels.encodeModel({ id, label, ...read });
 }
 
+// A texture's picture saved where the player picks (to paint over it and bring it back).
+async function worldSavePicture(event, png, name) {
+  const data = Buffer.from(String(png || ''), 'base64');
+  if (data.length < 8 || data.readUInt32BE(0) !== 0x89504e47) throw new Error('That isn\'t a picture.');
+  const chosen = await dialog.showSaveDialog(BrowserWindow.fromWebContents(event.sender), { title: 'Save the texture',
+    defaultPath: path.join(app.getPath('pictures'), `${String(name || 'texture').replace(/[^\w .()-]+/g, '_').slice(0, 60)}.png`), filters: [{ name: 'PNG picture', extensions: ['png'] }] });
+  if (chosen.canceled || !chosen.filePath) return null;
+  fs.writeFileSync(chosen.filePath, data);
+  return { file: chosen.filePath };
+}
+
 async function worldImport(event) {
   const chosen = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), { title: 'Import a level', properties: ['openFile'], filters: [{ name: 'World editor level', extensions: ['smsworld'] }] });
   if (chosen.canceled || !chosen.filePaths[0]) return null;
@@ -2669,6 +2680,13 @@ function registerHandlers() {
   ipcMain.handle('world-release', () => worldLibrary?.release());
   ipcMain.handle('world-texture-import', event => worldTextureImport(event));
   ipcMain.handle('world-model-import', event => worldModelImport(event));
+  // The textures a placed thing shows that can be given another picture, as PNGs.
+  ipcMain.handle('world-retexturable', (_event, ref) => {
+    worldModel(ref);  // checks the ref
+    const { writePng } = require('./texture-image');
+    return world.retexturable(worldLib(), String(ref)).map(({ rgba, ...texture }) => ({ ...texture, png: writePng(texture.width, texture.height, rgba).toString('base64') }));
+  });
+  ipcMain.handle('world-save-picture', (event, png, name) => worldSavePicture(event, png, name));
   ipcMain.handle('world-models', (_event, base, models) => worldStage.setUserModels(worldLib(), String(base || ''), models));
   // The level's own textures, for the editor to draw them (palette|user-… models) and list them.
   ipcMain.handle('world-textures', (_event, base, textures) => worldStage.setUserTextures(worldLib(), String(base || ''), textures));

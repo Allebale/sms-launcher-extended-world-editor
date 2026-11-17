@@ -8,7 +8,8 @@
       "World editor: things that crash the game away from their own stage, such as Bowser without his bathtub, now say what they need in the catalog, and Export and Play in game stop with a message saying what to remove instead of the game crashing.",
       "World editor: Play in game now opens straight on your level, without the logos, title screen or file select, and the screen stays black until the level fades in.",
       "World editor: add your own pictures as textures to paint and build with, under Your textures in Paint and Build. Pick their footsteps, how big one repeat is and whether they're see-through, and they're saved in the level file so they travel with it.",
-      "World editor: add your own 3D models (a .glb from Blender) with Add your own 3D model in Build, then place them from the catalog under Your models; turn and scale them, make them solid to walk on, and they're built into the stage when you export or play."
+      "World editor: add your own 3D models (a .glb from Blender) with Add your own 3D model in Build, then place them from the catalog under Your models; turn and scale them, make them solid to walk on, and they're built into the stage when you export or play.",
+      "World editor: retexture NPCs, enemies and objects: select one and give any of its textures your own picture under Textures (Save one first to paint over it). Everything in the level using the same model changes, in the editor and in the game."
     ],
     "game": [
       "Split-screen co-op: jumping while carrying the other player no longer pushes you sideways.",

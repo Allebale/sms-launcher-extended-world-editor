@@ -385,3 +385,37 @@ test('players\' own models are read in game units, standing where they\'re place
   // A damaged one says so.
   assert.throws(() => models.decodeModel({ ...clean.models[0], id: 'model-bbbbbbbbbbbb', parts: [{ ...clean.models[0].parts[0], index: Buffer.from(Uint32Array.from([0, 1, 9]).buffer).toString('base64') }] }), /damaged/);
 });
+
+test('retextures are checked and written into the stage archive\'s copy of each model file', () => {
+  const { writeNames } = require('../src/bmd-edit');
+  const { writePng } = require('../src/texture-image');
+  const j3d = require('../src/j3d');
+  // A model file with just a TEX1: two 8 × 8 textures, "skin" and "eye" (RGBA8, grey).
+  const texel = Buffer.alloc(8 * 8 * 4, 0x80);
+  const header = at => { const h = Buffer.alloc(0x20); h[0] = 6; h.writeUInt16BE(8, 2); h.writeUInt16BE(8, 4); h[6] = 1; h[7] = 1; h[0x18] = 1; h.writeUInt32BE(at, 0x1c); return h; };
+  const names = writeNames(['skin', 'eye']);
+  const dataAt = 0x20 + 0x40;
+  let tex = Buffer.concat([Buffer.alloc(0x20), header(dataAt - 0x20), header(dataAt + texel.length - 0x40), texel, texel, names]);
+  tex.write('TEX1', 0, 'ascii'); tex.writeUInt16BE(2, 8); tex.writeUInt32BE(0x20, 0x0c); tex.writeUInt32BE(dataAt + texel.length * 2, 0x10);
+  tex = Buffer.concat([tex, Buffer.alloc((32 - tex.length % 32) % 32)]);
+  tex.writeUInt32BE(tex.length, 4);
+  const head = Buffer.alloc(0x20); head.write('J3D2bmd3', 0, 'ascii'); head.writeUInt32BE(0x20 + tex.length, 8); head.writeUInt32BE(1, 0x0c);
+  const bmd = Buffer.concat([head, tex]);
+  const tree = { root: { name: 'scene', entries: [{ dir: { name: 'MonteW', entries: [{ file: { name: 'mow_body.bmd', data: bmd } }] } }] } };
+
+  const red = new Uint8Array(16 * 16 * 4);
+  for (let i = 0; i < red.length; i += 4) red.set([230, 20, 20, 255], i);
+  const png = writePng(16, 16, red).toString('base64');
+  const clean = world.cleanProject({ format: 'sms-world', base: 'home', retextures: {
+    'montew/mow_body.bmd|skin': { png }, '../evil.bmd|skin': { png }, 'montew/mow_body.bmd|eye': { png: writePng(12, 8, new Uint8Array(12 * 8 * 4)).toString('base64') },
+  } }, ['home']);
+  assert.deepEqual(Object.keys(clean.retextures), ['montew/mow_body.bmd|skin']);
+  assert.equal(world.applyRetextures(tree, clean.retextures), 1);
+  const out = j3d.decodeBti;  // the file's textures, read back
+  const written = tree.root.entries[0].dir.entries[0].file.data;
+  const sections = require('../src/j3d-write').sections(written);
+  const [at] = sections.get('TEX1');
+  const skin = out(written, at + written.readUInt32BE(at + 0x0c)), eye = out(written, at + written.readUInt32BE(at + 0x0c) + 0x20);
+  assert.deepEqual([skin.width, skin.format, Array.from(skin.rgba.subarray(0, 3)).map(v => v > 150)], [16, 14, [true, false, false]]);
+  assert.deepEqual([eye.width, eye.format, eye.rgba[0]], [8, 6, 0x80]);
+});

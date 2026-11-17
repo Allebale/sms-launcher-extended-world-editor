@@ -343,6 +343,26 @@ function userPaletteModel(library, id) {
     draw: [{ weighted: false, index: 0 }], envelopes: [], inverseBind: [], shapes: [quad] });
 }
 
+// --- Retextures ---------------------------------------------------------------------
+
+// A stage's own model textures given another picture: "file|texture name" ->
+// { png }, written into the stage archive's copy of that file on export, so
+// every NPC or object using it in the level changes.
+const RETEXTURE_KEY = /^(?:(?!\.)[a-z0-9_.-]{1,40}\/){1,2}(?!\.)[a-z0-9_.-]{1,80}\.bmd\|[\x21-\x7b\x7d\x7e][\x20-\x7b\x7d\x7e]{0,63}$/i;
+function cleanRetextures(input) {
+  const out = {};
+  let count = 0;
+  for (const [key, texture] of Object.entries(input && typeof input === 'object' ? input : {})) {
+    if (!RETEXTURE_KEY.test(key) || typeof texture?.png !== 'string' || texture.png.length > USER_BYTES * 1.4) continue;
+    const size = pngSize(Buffer.from(texture.png.slice(0, 64), 'base64'));
+    if (!size || !powerOfTwo(size.width) || !powerOfTwo(size.height)) continue;
+    out[key] = { png: texture.png, width: size.width, height: size.height };
+    if (++count >= 128) break;
+  }
+  return out;
+}
+const retextureImage = texture => userImage({ id: `re-${require('node:crypto').createHash('sha1').update(texture.png).digest('hex')}`, label: 'A retexture', png: texture.png });
+
 // --- Players' own models ------------------------------------------------------------
 
 // The level's models, as the editor last sent them, to draw (usermodel|… refs).
@@ -568,7 +588,7 @@ function cleanStage(input, scenes) {
     const textures = { top: ID.test(piece.textures?.top) ? piece.textures.top : 'delfino-tiles', side: ID.test(piece.textures?.side) ? piece.textures.side : 'delfino-white-wall' };
     return [{ uid, kind: piece.kind, label, position: [...piece.position], yaw, size: build.cleanSize(piece.kind, piece.size), textures, ground: ID.test(piece.ground) ? piece.ground : null }];
   });
-  return { texturePaint, pieces, blank: Boolean(input?.blank), textures: cleanUserTextures(input?.textures), models };
+  return { texturePaint, pieces, blank: Boolean(input?.blank), textures: cleanUserTextures(input?.textures), models, retextures: cleanRetextures(input?.retextures) };
 }
 const hasStageEdits = project => project.blank || Object.keys(project.texturePaint || {}).length > 0 || (project.pieces || []).length > 0;
 
@@ -891,6 +911,6 @@ function invert(m) {
 }
 
 module.exports = {
-  PALETTE, PALETTE_GROUPS, PREFABS, palette, paletteModel, isUserTexture, cleanUserTextures, userBti, userEntry, setUserTextures, setUserModels, prefabs, prefabModel, prefabRef, parsePrefabRef, stageModel,
+  PALETTE, PALETTE_GROUPS, PREFABS, palette, paletteModel, isUserTexture, cleanUserTextures, userBti, userEntry, setUserTextures, setUserModels, cleanRetextures, retextureImage, prefabs, prefabModel, prefabRef, parsePrefabRef, stageModel,
   cleanStage, hasStageEdits, buildMap, buildGround, buildSea, openSea, plainTemplate, EMPTY_KEEPS,
 };
