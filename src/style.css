@@ -1206,7 +1206,9 @@ small.renderer-warning { color: #a8481a; }
 .world-texture-pick img { width: 26px; height: 26px; border-radius: 5px; box-shadow: inset 0 0 0 1px #0002; image-rendering: pixelated; }
 .world-texture-pick select { min-width: 0; font-size: 12px; }
 .world-build-actions { display: grid; gap: 6px; margin: 10px 0 8px; }
-#world-texture-add { width: 100%; padding: 7px 9px; font-size: 11px; }
+#world-texture-add, #world-model-add { width: 100%; padding: 7px 9px; font-size: 11px; }
+.world-model-fields { display: grid; gap: 7px; margin-top: 8px; }
+#world-model-remove { justify-self: start; padding: 6px 9px; font-size: 11px; }
 .world-texture-own { display: grid; gap: 7px; margin-top: 10px; }
 .world-texture-own-head { display: flex; align-items: center; gap: 9px; }
 .world-texture-own-head img { width: 48px; height: 48px; border-radius: 6px; box-shadow: inset 0 0 0 1px #0002; image-rendering: pixelated; object-fit: cover; }

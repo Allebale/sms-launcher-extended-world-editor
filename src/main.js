@@ -45,6 +45,7 @@ const outfitPortraits = require('./outfit-portraits');
 const { Worker } = require('node:worker_threads');
 const world = require('./world');
 const worldStage = require('./world-stage');
+const worldModels = require('./world-model');
 const marioColors = require('./mario-colors');
 const marioPack = require('./mario-pack');
 const { relaunchOptions } = require('./relaunch');
@@ -1537,6 +1538,7 @@ function worldCatalog() {
 function worldModel(ref) {
   const library = worldLib(), [scene, file, extra] = String(ref).split('|');
   if (scene === 'palette' && /^[a-z0-9-]{1,40}$/.test(file || '') && extra === undefined) return library.model(ref);
+  if (scene === 'usermodel' && /^model-[0-9a-f]{12}$/.test(file || '') && extra === undefined) return library.model(ref);
   if (scene === 'prefab' && library.scenes().includes(file) && /^-?\d+,-?\d+,-?\d+,-?\d+$/.test(extra || '')) return library.model(ref);
   if (!file || file.includes('..') || (extra && !/^(npc:\d+:-?\d+,-?\d+:-?\d+,-?\d+,-?\d+:\d+|tint:\d{1,3},\d{1,3},\d{1,3})$/.test(extra))
     || !(scene === 'mario' || scene === 'common' || library.scenes().includes(scene))) throw new Error('That model isn\'t on your disc.');
@@ -1688,29 +1690,48 @@ async function worldPlay(input) {
 // WebP or BMP), each side made the nearest power of two from 8 to 512 (keeping
 // its shape as near as that allows), and kept as a PNG.
 const worldTextureSide = v => 2 ** Math.max(3, Math.min(9, Math.round(Math.log2(Math.max(1, v)))));
+// A picture (from a file or inside a model) as RGBA with sides a power of two from 8 to 512.
+function worldPicture(image) {
+  if (image.isEmpty()) throw new Error('That isn\'t a picture the launcher can read (PNG, JPEG, WebP or BMP).');
+  const size = image.getSize(), width = worldTextureSide(size.width), height = worldTextureSide(size.height);
+  const resized = width === size.width && height === size.height ? image : image.resize({ width, height, quality: 'best' });
+  // Chromium's pixels: blue, green, red, alpha, with colour multiplied by alpha.
+  const bgra = resized.toBitmap(), rgba = new Uint8Array(width * height * 4);
+  for (let i = 0; i < rgba.length; i += 4) {
+    const a = bgra[i + 3], undo = a ? 255 / a : 0;
+    rgba[i] = Math.min(255, Math.round(bgra[i + 2] * undo)); rgba[i + 1] = Math.min(255, Math.round(bgra[i + 1] * undo));
+    rgba[i + 2] = Math.min(255, Math.round(bgra[i] * undo)); rgba[i + 3] = a;
+  }
+  return { width, height, rgba, original: size };
+}
 async function worldTextureImport(event) {
   const chosen = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), { title: 'Add your own texture', properties: ['openFile'],
     filters: [{ name: 'Pictures', extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp'] }] });
   if (chosen.canceled || !chosen.filePaths[0]) return null;
   const file = chosen.filePaths[0];
   if (fs.statSync(file).size > 64 << 20) throw new Error('That picture is too large.');
-  const image = nativeImage.createFromPath(file);
-  if (image.isEmpty()) throw new Error('That file isn\'t a picture the launcher can read (PNG, JPEG, WebP or BMP).');
-  const size = image.getSize(), width = worldTextureSide(size.width), height = worldTextureSide(size.height);
-  const resized = width === size.width && height === size.height ? image : image.resize({ width, height, quality: 'best' });
-  // Chromium's pixels: blue, green, red, alpha, with colour multiplied by alpha.
-  const bgra = resized.toBitmap(), rgba = new Uint8Array(width * height * 4);
+  const { width, height, rgba, original: size } = worldPicture(nativeImage.createFromPath(file));
   let seeThrough = false;
-  for (let i = 0; i < rgba.length; i += 4) {
-    const a = bgra[i + 3], undo = a ? 255 / a : 0;
-    rgba[i] = Math.min(255, Math.round(bgra[i + 2] * undo)); rgba[i + 1] = Math.min(255, Math.round(bgra[i + 1] * undo));
-    rgba[i + 2] = Math.min(255, Math.round(bgra[i] * undo)); rgba[i + 3] = a;
-    if (a < 128) seeThrough = true;
-  }
+  for (let i = 3; i < rgba.length; i += 4) if (rgba[i] < 128) { seeThrough = true; break; }
   const png = require('./texture-image').writePng(width, height, rgba);
   const label = path.basename(file, path.extname(file)).replace(/[_-]+/g, ' ').replace(/[^\w ()'.,-]+/g, '').trim().slice(0, 40) || 'My texture';
   return { id: `user-${crypto.createHash('sha1').update(png).digest('hex').slice(0, 12)}`, label, png: png.toString('base64'), width, height, cutout: seeThrough,
     resized: width !== size.width || height !== size.height, original: size };
+}
+
+// A 3D model of the player's (binary glTF, .glb) for their level, read into
+// parts with their textures as the game needs them.
+async function worldModelImport(event) {
+  const chosen = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), { title: 'Add your own 3D model', properties: ['openFile'],
+    filters: [{ name: '3D models (binary glTF)', extensions: ['glb'] }] });
+  if (chosen.canceled || !chosen.filePaths[0]) return null;
+  const file = chosen.filePaths[0];
+  if (fs.statSync(file).size > 128 << 20) throw new Error('That model is too large.');
+  const data = fs.readFileSync(file);
+  const read = worldModels.readGlb(data, bytes => worldPicture(nativeImage.createFromBuffer(bytes)));
+  const label = path.basename(file, path.extname(file)).replace(/[_-]+/g, ' ').replace(/[^\w ()'.,-]+/g, '').trim().slice(0, 40) || 'My model';
+  const id = `model-${crypto.createHash('sha1').update(data).digest('hex').slice(0, 12)}`;
+  return worldModels.encodeModel({ id, label, ...read });
 }
 
 async function worldImport(event) {
@@ -2647,6 +2668,8 @@ function registerHandlers() {
   ipcMain.handle('world-import', event => worldImport(event));
   ipcMain.handle('world-release', () => worldLibrary?.release());
   ipcMain.handle('world-texture-import', event => worldTextureImport(event));
+  ipcMain.handle('world-model-import', event => worldModelImport(event));
+  ipcMain.handle('world-models', (_event, base, models) => worldStage.setUserModels(worldLib(), String(base || ''), models));
   // The level's own textures, for the editor to draw them (palette|user-… models) and list them.
   ipcMain.handle('world-textures', (_event, base, textures) => worldStage.setUserTextures(worldLib(), String(base || ''), textures));
   ipcMain.handle('world-export', (event, project, kind) => worldExport(event, project, kind));

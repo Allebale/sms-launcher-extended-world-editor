@@ -25,6 +25,12 @@ let texturePaintVersion = 0;
 // undo history); their pictures (PNG, base64) are kept here by id, once.
 const texturePngs = new Map();
 let userPalette = [], paletteVersion = 0;
+// The level's own 3D models likewise: project.models has their names, sizes
+// and triangle counts; their parts (arrays and pictures, base64) are kept here.
+const modelData = new Map();
+let catalogBase = null;
+// Pieces of these kinds are drawn from a model; the rest are built from their size and textures.
+const MODEL_PIECES = new Set(['prefab', 'model']);
 const BUILD = window.smsWorldBuild;
 let undoStack = [], redoStack = [], dirty = false, busy = false;
 let filter = { text: '', category: 'all', world: 'all' };
@@ -63,7 +69,8 @@ async function boot() {
     }
     if (!catalog) {
       setStatus('Cataloguing everything placed in every stage… (only the first time)', true);
-      catalog = withStagePieces(await window.sms.worldCatalog());
+      catalogBase = withStagePieces(await window.sms.worldCatalog());
+      catalog = withUserModels(catalogBase);
       renderFilters();
       renderCatalog();
     }
@@ -84,11 +91,13 @@ async function openLevel(scene, saved = null) {
   try {
     level = await window.sms.worldLoad(scene);
     texturePngs.clear();
+    modelData.clear();
     project = saved ? normalizeProject(saved, scene) : newProject(scene);
     undoStack = []; redoStack = []; dirty = false; selected = null;
     $('world-level').value = scene;
     $('world-name').value = project.name;
     await syncTextures();
+    await syncModels();
     await showLevel();
     renderOutline();
     renderInspector();
@@ -102,7 +111,7 @@ async function openLevel(scene, saved = null) {
 }
 
 function newProject(scene) {
-  return { format: 'sms-world', version: 1, name: `My ${sceneLabel(scene)}`, base: scene, disc: levels.disc.gameId, edits: {}, added: [], paint: {}, pieces: [], texturePaint: {}, blank: false, textures: [] };
+  return { format: 'sms-world', version: 1, name: `My ${sceneLabel(scene)}`, base: scene, disc: levels.disc.gameId, edits: {}, added: [], paint: {}, pieces: [], texturePaint: {}, blank: false, textures: [], models: [] };
 }
 
 function normalizeProject(saved, scene) {
@@ -113,11 +122,27 @@ function normalizeProject(saved, scene) {
       if (png) texturePngs.set(texture.id, png);
       return texturePngs.has(texture.id) ? [texture] : [];
     }),
+    models: (saved.models || []).flatMap(model => {
+      if (model.parts) modelData.set(model.id, model);
+      return modelData.has(model.id) ? [{ id: model.id, label: model.label, triangles: model.triangles, size: model.size }] : [];
+    }),
   };
 }
 
 // The level as it's saved, exported and played: its textures with their pictures.
-const fullProject = () => ({ ...project, textures: (project.textures || []).filter(t => texturePngs.has(t.id)).map(t => ({ ...t, png: texturePngs.get(t.id) })) });
+const fullProject = () => ({
+  ...project, textures: (project.textures || []).filter(t => texturePngs.has(t.id)).map(t => ({ ...t, png: texturePngs.get(t.id) })),
+  models: (project.models || []).filter(m => modelData.has(m.id)).map(m => ({ ...modelData.get(m.id), label: m.label })),
+});
+
+// The level's models to the launcher (which draws them) and into the catalog, under Your models.
+async function syncModels() {
+  await window.sms.worldModels(project.base, fullProject().models);
+  if (!catalogBase) return;
+  catalog = withUserModels(catalogBase);
+  renderFilters();
+  renderCatalog();
+}
 
 // The level's textures to the launcher (which draws them) and into the pickers.
 async function syncTextures() {
@@ -195,10 +220,12 @@ const fitOf = id => paletteById(id)?.fit || 0;
 function pieceObject(piece) {
   const kind = BUILD.KIND[piece.kind];
   return {
-    id: piece.uid, piece, added: true, category: 'pieces', key: piece.kind === 'prefab' ? piece.ref : `build:${piece.kind}`,
-    label: piece.label || kind?.label || 'Stage piece', type: piece.kind === 'prefab' ? 'Copied stage piece' : `${kind?.label || 'Built'} piece`,
-    name: '', model: piece.kind === 'prefab' ? piece.ref : null,
-    transform: { position: piece.position, rotation: [0, piece.yaw || 0, 0], scale: [1, 1, 1] },
+    id: piece.uid, piece, added: true, category: piece.kind === 'model' ? 'yours' : 'pieces',
+    key: piece.kind === 'prefab' ? piece.ref : piece.kind === 'model' ? `usermodel:${piece.ref}` : `build:${piece.kind}`,
+    label: piece.label || (piece.kind === 'model' ? project.models?.find(m => m.id === piece.ref)?.label : null) || kind?.label || 'Stage piece',
+    type: piece.kind === 'prefab' ? 'Copied stage piece' : piece.kind === 'model' ? 'Your 3D model' : `${kind?.label || 'Built'} piece`,
+    name: '', model: piece.kind === 'prefab' ? piece.ref : piece.kind === 'model' ? `usermodel|${piece.ref}` : null,
+    transform: { position: piece.position, rotation: [0, piece.yaw || 0, 0], scale: Array(3).fill(piece.kind === 'model' ? piece.scale || 1 : 1) },
   };
 }
 
@@ -221,9 +248,10 @@ function restore(from, to) {
   if (!from.length || view?.gesturing()) return;
   const file = project.file;
   to.push(JSON.stringify(project));
-  const before = JSON.stringify(project.textures || []);
+  const before = JSON.stringify(project.textures || []), beforeModels = JSON.stringify(project.models || []);
   project = JSON.parse(from.pop());
   project.file = file;  // undo changes the level, not where it's saved
+  if (JSON.stringify(project.models || []) !== beforeModels) syncModels();
   if (JSON.stringify(project.textures || []) !== before) {
     for (const entry of userPalette) view?.forgetModel(`palette|${entry.id}`);
     syncTextures().then(() => syncScene());
@@ -246,6 +274,11 @@ function setTransform(id, transform) {
     const piece = project.pieces.find(p => p.uid === id);
     piece.position = [...transform.position];
     piece.yaw = transform.rotation[1];
+    // A model of the player's grows the same every way: the axis that changed sets it.
+    if (piece.kind === 'model') {
+      const old = piece.scale || 1, changed = transform.scale.find(v => Math.abs(v - old) > 1e-6) ?? old;
+      piece.scale = Math.max(0.05, Math.min(50, Number(changed) || 1));
+    }
   } else if (object.added) project.added.find(a => a.uid === id).transform = transform;
   else project.edits[id] = { transform };
 }
@@ -629,6 +662,25 @@ $('world-texture-remove').addEventListener('click', () => {
   syncTextures().then(() => syncScene());
 });
 
+// --- The level's own 3D models -------------------------------------------------------
+
+$('world-model-add').addEventListener('click', async () => {
+  if (!project) return;
+  if ((project.models || []).length >= 16) { flash('A level can have 16 models of its own. Remove one to add another.', true); return; }
+  flash('Reading the model…');
+  let model;
+  try { model = await window.sms.worldModelImport(); } catch (error) { flash(error.message || String(error), true); return; }
+  if (!model) { $('world-flash').hidden = true; return; }
+  if (!project.models.some(m => m.id === model.id)) {
+    modelData.set(model.id, model);
+    change('Add a model', () => { project.models.push({ id: model.id, label: model.label, triangles: model.triangles, size: model.size }); });
+    await syncModels();
+  }
+  const item = catalog.items.find(i => i.userModel === model.id);
+  flash(`Added “${model.label}” (${model.triangles.toLocaleString()} triangles). Click the stage to place it; it's in the catalog under Your models.`);
+  if (item) startPlacing(item);
+});
+
 const buildPieceSpec = () => ({ kind: buildKind, size: BUILD.KIND[buildKind].size, textures: { ...buildTextures }, label: BUILD.KIND[buildKind].label });
 
 $('world-copy-piece').addEventListener('click', () => setTool('copy'));
@@ -661,6 +713,18 @@ function withStagePieces(list) {
     };
   });
   return { ...list, categories: [{ id: 'pieces', label: 'Stage pieces' }, ...list.categories], items: [...items, ...list.items] };
+}
+
+// The level's own models in the catalog, to place like the stage pieces.
+function withUserModels(list) {
+  const models = project?.models || [];
+  const items = models.map(model => ({
+    key: `usermodel:${model.id}`, type: 'Your 3D model', variant: '', label: model.label, category: 'yours', piece: 'model', userModel: model.id,
+    worlds: [], scenes: [], count: 1, model: `usermodel|${model.id}`, source: null, scale: [1, 1, 1],
+    note: `${model.triangles.toLocaleString()} triangles, ${model.size.map(v => (v / 100).toFixed(1)).join(' × ')} m. Saved in the level file; exporting builds it into this stage's model.`,
+    search: `${model.label} your model 3d`.toLowerCase(),
+  }));
+  return { ...list, categories: [{ id: 'yours', label: 'Your models' }, ...list.categories], items: [...items, ...list.items] };
 }
 
 function renderFilters() {
@@ -756,7 +820,7 @@ function startPlacing(item) {
 function previewItem(item) {
   previewed = item;
   $('world-preview-name').textContent = item.label;
-  $('world-preview-detail').textContent = item.piece ? `${item.type} · from ${levels.scenes[item.scenes?.[0]]?.label || 'a stage'}` : `${item.type}${item.variant ? ` · ${item.variant}` : ''} · placed ${item.count}× on the disc`;
+  $('world-preview-detail').textContent = item.userModel ? `${item.type} · in this level` : item.piece ? `${item.type} · from ${levels.scenes[item.scenes?.[0]]?.label || 'a stage'}` : `${item.type}${item.variant ? ` · ${item.variant}` : ''} · placed ${item.count}× on the disc`;
   $('world-preview').hidden = false;
   view?.preview(item);
 }
@@ -840,8 +904,16 @@ function renderInspector() {
   $('world-delete').disabled = $('world-duplicate').disabled = isStart(object);
   $('world-reset').disabled = Boolean(object.added) || !object.edited;
   // Pieces turn about the vertical only; built ones have a size and textures instead of a scale.
-  const built = object.piece && object.piece.kind !== 'prefab';
-  $('world-scale-row').hidden = Boolean(object.piece);
+  const built = object.piece && !MODEL_PIECES.has(object.piece.kind), own = object.piece?.kind === 'model';
+  $('world-scale-row').hidden = Boolean(object.piece) && !own;
+  $('world-model-fields').hidden = !own;
+  if (own) {
+    $('world-model-solid').checked = object.piece.solid !== false;
+    const ground = $('world-model-ground');
+    if (!ground.options.length) for (const s of surfaces) ground.append(new Option(s.label, s.id));
+    ground.value = object.piece.ground || 'stone';
+    ground.disabled = object.piece.solid === false;
+  }
   $('world-rot-x').disabled = $('world-rot-z').disabled = Boolean(object.piece);
   $('world-piece-fields').hidden = !built;
   if (built) {
@@ -851,7 +923,22 @@ function renderInspector() {
   }
 }
 
-const selectedPiece = () => { const object = selected && objectById(selected); return object?.piece && object.piece.kind !== 'prefab' ? object.piece : null; };
+const selectedPiece = () => { const object = selected && objectById(selected); return object?.piece && !MODEL_PIECES.has(object.piece.kind) ? object.piece : null; };
+const selectedModel = () => { const object = selected && objectById(selected); return object?.piece?.kind === 'model' ? object.piece : null; };
+$('world-model-solid').addEventListener('change', event => { const piece = selectedModel(); if (piece) change('Make solid', () => { piece.solid = event.target.checked; }); });
+$('world-model-ground').addEventListener('change', event => { const piece = selectedModel(); if (piece) change('Change footsteps', () => { piece.ground = event.target.value; }); });
+$('world-model-remove').addEventListener('click', () => {
+  const piece = selectedModel();
+  if (!piece) return;
+  const model = project.models.find(m => m.id === piece.ref), placed = project.pieces.filter(p => p.kind === 'model' && p.ref === piece.ref).length;
+  if (!confirm(`Remove “${model?.label || 'this model'}” from the level${placed > 1 ? `, with all ${placed} of it you placed` : ''}? You can undo this.`)) return;
+  change('Remove a model', () => {
+    project.models = project.models.filter(m => m.id !== piece.ref);
+    project.pieces = project.pieces.filter(p => !(p.kind === 'model' && p.ref === piece.ref));
+    selected = null;
+  });
+  syncModels();
+});
 for (const [i, axis] of AXES.entries())
   $(`world-size-${axis}`).addEventListener('change', event => {
     const piece = selectedPiece(), value = Number(event.target.value);
@@ -1284,17 +1371,25 @@ function createView(canvas) {
     const extra = [], codes = [];
     const codeOf = id => { const surface = surfaces.find(s => s.id === id) || surfaces[0]; return surface.type * 256 + surface.sound; };
     for (const piece of pieces) {
-      if (piece.kind === 'prefab') {
-        const model = await modelFor(piece.ref);
+      if (piece.kind === 'prefab' || piece.kind === 'model') {
+        if (piece.kind === 'model' && piece.solid === false) continue;
+        const model = await modelFor(piece.kind === 'model' ? `usermodel|${piece.ref}` : piece.ref);
         if (token !== groundToken) return;
         const ground = model?.ground;
         if (!ground) continue;
-        const yaw = (piece.yaw || 0) * DEG, c = Math.cos(yaw), s = Math.sin(yaw), [px, py, pz] = piece.position;
+        const yaw = (piece.yaw || 0) * DEG, c = Math.cos(yaw), s = Math.sin(yaw), [px, py, pz] = piece.position, k = piece.kind === 'model' ? piece.scale || 1 : 1;
         for (let i = 0; i < ground.position.length; i += 3) {
-          const x = ground.position[i], y = ground.position[i + 1], z = ground.position[i + 2];
+          const x = ground.position[i] * k, y = ground.position[i + 1] * k, z = ground.position[i + 2] * k;
           extra.push(px + x * c + z * s, py + y, pz - x * s + z * c);
         }
-        codes.push(...ground.codes);
+        if (piece.kind === 'model') {
+          const code = codeOf(piece.ground || 'stone'), stone = codeOf('stone'), g = ground.position;
+          for (let t = 0; t < g.length; t += 9) {
+            const e1 = [g[t + 3] - g[t], g[t + 4] - g[t + 1], g[t + 5] - g[t + 2]], e2 = [g[t + 6] - g[t], g[t + 7] - g[t + 1], g[t + 8] - g[t + 2]];
+            const ny = e1[2] * e2[0] - e1[0] * e2[2], l = Math.hypot(e1[1] * e2[2] - e1[2] * e2[1], ny, e1[0] * e2[1] - e1[1] * e2[0]) || 1;
+            codes.push(BUILD.isFloor([0, ny / l, 0]) ? code : stone);
+          }
+        } else codes.push(...ground.codes);
         continue;
       }
       if (!BUILD.solid(piece)) continue;
@@ -1439,7 +1534,7 @@ function createView(canvas) {
 
   // Built pieces are drawn where they are (their textures laid over the
   // world), so they're made again when they move or change.
-  const builtPiece = object => object.piece && object.piece.kind !== 'prefab';
+  const builtPiece = object => object.piece && !MODEL_PIECES.has(object.piece.kind);
   const pieceRef = piece => `piece:${JSON.stringify([piece.kind, piece.size, piece.textures, piece.position, piece.yaw, paletteVersion])}`;
   function dropEntry(entry) {
     things.remove(entry.root);
@@ -1785,6 +1880,14 @@ function createView(canvas) {
     if (tool === 'copy') {
       const hit = surfacePoint(ray);
       if (hit) { copyBox = { from: hit.point.clone(), to: hit.point.clone() }; showCopyBox(); }
+      return;
+    }
+    if (tool === 'place' && placing?.piece === 'model') {
+      const hit = surfacePoint(ray);
+      if (!hit) return;
+      const piece = { uid: uid(), kind: 'model', ref: placing.userModel, label: '', position: [Math.round(hit.point.x), Math.round(hit.point.y), Math.round(hit.point.z)], yaw: ghostYaw, scale: 1, solid: true, ground: 'stone' };
+      change('Place', () => { project.pieces.push(piece); selected = piece.uid; });
+      if (!event.shiftKey) setTool('select');
       return;
     }
     if (tool === 'place' && placing?.piece) {

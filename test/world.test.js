@@ -335,3 +335,53 @@ test('players\' own textures are kept checked, and written as the game\'s compre
   assert.equal(solid.rgba[(2 * w + 50) * 4 + 3], 255);
   assert.equal(stage.userBti({ width: 8, height: 8, rgba: new Uint8Array(256) })[0x18], 1);
 });
+
+// A binary glTF with one node (moved 2 m up, mirrored on x) holding a red 1 × 1 m square.
+function squareGlb() {
+  const positions = Float32Array.from([0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1]), indices = Uint16Array.from([0, 2, 1, 0, 3, 2]);
+  const bin = Buffer.concat([Buffer.from(positions.buffer), Buffer.from(indices.buffer)]);
+  const json = {
+    asset: { version: '2.0' }, scene: 0, scenes: [{ nodes: [0] }],
+    nodes: [{ mesh: 0, translation: [0, 2, 0], scale: [-1, 1, 1] }],
+    meshes: [{ primitives: [{ attributes: { POSITION: 0 }, indices: 1, material: 0 }] }],
+    materials: [{ pbrMetallicRoughness: { baseColorFactor: [1, 0, 0, 1] } }],
+    buffers: [{ byteLength: bin.length }],
+    bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: 48 }, { buffer: 0, byteOffset: 48, byteLength: 12 }],
+    accessors: [{ bufferView: 0, componentType: 5126, count: 4, type: 'VEC3', min: [0, 0, 0], max: [1, 0, 1] }, { bufferView: 1, componentType: 5123, count: 6, type: 'SCALAR' }],
+  };
+  let text = Buffer.from(JSON.stringify(json));
+  text = Buffer.concat([text, Buffer.alloc((4 - text.length % 4) % 4, 0x20)]);
+  const chunk = (kind, body) => { const head = Buffer.alloc(8); head.writeUInt32LE(body.length); head.write(kind, 4, 'ascii'); return Buffer.concat([head, body]); };
+  const body = Buffer.concat([chunk('JSON', text), chunk('BIN\0', Buffer.concat([bin, Buffer.alloc((4 - bin.length % 4) % 4)]))]);
+  const head = Buffer.alloc(12); head.write('glTF'); head.writeUInt32LE(2, 4); head.writeUInt32LE(12 + body.length, 8);
+  return Buffer.concat([head, body]);
+}
+
+test('players\' own models are read in game units, standing where they\'re placed, and kept checked in the level file', () => {
+  const models = require('../src/world-model');
+  const read = models.readGlb(squareGlb(), () => { throw new Error('no pictures here'); });
+  assert.equal(read.triangles, 2);
+  assert.deepEqual(read.size, [100, 0, 100]);
+  const [part] = read.parts;
+  // Centred on x and z, standing on y = 0, the colour as an 8 × 8 texture.
+  assert.deepEqual(Array.from(part.position.subarray(0, 3)), [50, 0, -50]);
+  assert.deepEqual([part.texture.width, Array.from(part.texture.rgba.subarray(0, 4))], [8, [255, 0, 0, 255]]);
+  // Mirrored on x, the faces are turned back to face up.
+  const P = part.position, I = part.index;
+  const e1 = [0, 1, 2].map(k => P[I[1] * 3 + k] - P[I[0] * 3 + k]), e2 = [0, 1, 2].map(k => P[I[2] * 3 + k] - P[I[0] * 3 + k]);
+  assert.ok(e1[2] * e2[0] - e1[0] * e2[2] > 0);
+  assert.ok(part.normal[1] > 0.99);
+
+  const stored = models.encodeModel({ id: 'model-0123456789ab', label: 'Square', ...read });
+  const clean = world.cleanProject({ format: 'sms-world', base: 'home', models: [stored, { ...stored, id: 'nope' }], pieces: [
+    { uid: 'a', kind: 'model', ref: 'model-0123456789ab', position: [1, 2, 3], scale: 900, solid: false },
+    { uid: 'b', kind: 'model', ref: 'model-ffffffffffff', position: [0, 0, 0] },
+  ] }, ['home']);
+  assert.deepEqual(clean.models.map(m => [m.id, m.triangles]), [['model-0123456789ab', 2]]);
+  assert.deepEqual(clean.pieces.map(p => [p.uid, p.scale, p.solid, p.ground]), [['a', 50, false, 'stone']]);
+  const back = models.decodeModel(clean.models[0]);
+  assert.deepEqual(Array.from(back.parts[0].position), Array.from(part.position));
+  assert.deepEqual(Array.from(back.parts[0].index), Array.from(part.index));
+  // A damaged one says so.
+  assert.throws(() => models.decodeModel({ ...clean.models[0], id: 'model-bbbbbbbbbbbb', parts: [{ ...clean.models[0].parts[0], index: Buffer.from(Uint32Array.from([0, 1, 9]).buffer).toString('base64') }] }), /damaged/);
+});

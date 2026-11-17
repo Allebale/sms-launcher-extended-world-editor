@@ -221,6 +221,8 @@
             <label class="world-texture-pick"><img id="world-build-side-swatch" alt=""><span>Sides</span><select id="world-build-side" aria-label="Texture on the sides"></select></label>
             <div class="world-build-actions"><button id="world-copy-piece" class="subtle" title="Drag a box over part of the stage, such as a building, to place copies of it">Copy part of the stage</button><button id="world-empty-stage" class="subtle" title="Take away the stage's ground, buildings and objects, keeping its sea and sky">Start from an empty stage</button></div>
             <p class="helper">Whole buildings from Delfino are in the catalog under Stage pieces.</p>
+            <button id="world-model-add" class="subtle" title="A binary glTF (.glb) model, as Blender exports it">Add your own 3D model…</button>
+            <p class="helper">Your models are listed in the catalog under Your models. They stand still: scenery to look at and walk on.</p>
           </div>
           <div id="world-own-panel" class="world-panel" hidden>
             <h2>Your textures</h2>
@@ -253,6 +255,11 @@
                 <div class="world-vector"><span>Size</span><input id="world-size-x" aria-label="Width"><input id="world-size-y" aria-label="Height"><input id="world-size-z" aria-label="Depth"></div>
                 <label class="world-texture-pick"><img id="world-piece-top-swatch" alt=""><span>Top</span><select id="world-piece-top" aria-label="Texture on top"></select></label>
                 <label class="world-texture-pick"><img id="world-piece-side-swatch" alt=""><span>Sides</span><select id="world-piece-side" aria-label="Texture on the sides"></select></label>
+              </div>
+              <div id="world-model-fields" class="world-model-fields" hidden>
+                <label class="world-check"><input id="world-model-solid" type="checkbox"><span>Solid: Mario stands on it and bumps into it</span></label>
+                <label class="world-field"><span>Footsteps</span><select id="world-model-ground"></select></label>
+                <button id="world-model-remove" class="subtle danger">Remove this model from the level</button>
               </div>
               <div class="world-actions"><button id="world-focus" class="subtle" title="Look at it (F)">Look at</button><button id="world-drop" class="subtle" title="Put it on the ground below">Drop to ground</button><button id="world-duplicate" class="subtle" title="Duplicate (Ctrl+D)">Duplicate</button><button id="world-reset" class="subtle" title="Put it back where the game had it">Reset</button><button id="world-delete" class="subtle danger" title="Delete (Del)">Delete</button></div>
             </div>

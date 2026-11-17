@@ -158,9 +158,14 @@ class BmdEdit {
   addVertex(attr, values) {
     const array = this.arrays.get(attr);
     if (!array) throw new Error(`This model has no vertex array for attribute ${attr}.`);
+    // The same value added again shares its entry: indices are 16 bits.
+    const element = encodeElement(array.format, values), key = element.toString('latin1');
+    array.known ||= new Map();
+    if (array.known.has(key)) return array.known.get(key);
     const index = array.count + array.added.length;
-    if (index > 0xffff) throw new Error('The stage model is too big to add more to.');
-    array.added.push(encodeElement(array.format, values));
+    if (index > 0xffff) throw new Error('The stage model is too big to add more to: use fewer or simpler models and pieces.');
+    array.added.push(element);
+    array.known.set(key, index);
     return index;
   }
   hasArray(attr) { return this.arrays.has(attr); }

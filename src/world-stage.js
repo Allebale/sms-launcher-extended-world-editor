@@ -16,6 +16,7 @@ const build = require('./world-build');
 const { BmdEdit, POS, NRM, CLR0, TEX0 } = require('./bmd-edit');
 const { cmpr } = require('./j3d-write');
 const { readPng } = require('./texture-image');
+const userModels = require('./world-model');
 
 const MAP = 'map/map/map.bmd', COL = 'map/map.col', SEA = 'map/map/sea.bmd';
 
@@ -342,6 +343,59 @@ function userPaletteModel(library, id) {
     draw: [{ weighted: false, index: 0 }], envelopes: [], inverseBind: [], shapes: [quad] });
 }
 
+// --- Players' own models ------------------------------------------------------------
+
+// The level's models, as the editor last sent them, to draw (usermodel|… refs).
+const userModelsOf = new WeakMap();  // library -> { base, models: Map(id -> model) }
+function setUserModels(library, base, list) {
+  const models = userModels.cleanUserModels(list);
+  userModelsOf.set(library, { base, models: new Map(models.map(m => [m.id, m])) });
+  return models.map(m => ({ id: m.id, label: m.label, triangles: m.triangles, size: m.size }));
+}
+// A stage's model and its plainest material, to draw players' textures and models with.
+function plainStage(library, base) {
+  for (const candidate of [base, 'dolpic0', ...library.scenes()]) {
+    try { if (!library.files(candidate).get(MAP)) continue; } catch (_) { continue; }
+    const model = library.parsed(candidate, MAP), plain = plainTemplate(model);
+    if (plain) return { model, plain };
+  }
+  throw new Error('No stage on your disc has a material to show it with.');
+}
+// The model drawn in the editor: each part with the stage's plain material
+// showing the part's texture, lit by the light baked into its vertex colours.
+function userModelBaked(library, id) {
+  const known = userModelsOf.get(library), stored = known?.models.get(id);
+  if (!stored) throw new Error('That model isn\'t in this level.');
+  const model = userModels.decodeModel(stored);
+  const { model: stageModelData, plain } = plainStage(library, known.base);
+  const template = stageModelData.materials[plain.index];
+  const textures = [], materials = [], shapes = [], position = [], codes = [];
+  model.parts.forEach((part, i) => {
+    textures.push({ name: `${id}-${i}`, width: part.texture.width, height: part.texture.height, rgba: part.texture.rgba, wrapS: 1, wrapT: 1, mipmapped: true });
+    const material = { ...template, textures: [i, ...template.textures.slice(1).map(() => -1)], texMatrices: (template.texMatrices || []).map(m => m && { ...m, scale: [1, 1] }) };
+    if (part.cutout) material.alphaTest = { comp0: 6, ref0: 128, op: 0, comp1: 3, ref1: 255 };
+    materials.push(material);
+    const count = part.position.length / 3, color = new Float32Array(count * 4);
+    for (let v = 0; v < count; v++) {
+      const light = build.shade([part.normal[v * 3], part.normal[v * 3 + 1], part.normal[v * 3 + 2]], DAYLIGHT);
+      for (let k = 0; k < 3; k++) color[v * 4 + k] = light[k] / 255 * part.color[v * 4 + k] / 255;
+      color[v * 4 + 3] = part.color[v * 4 + 3] / 255;
+    }
+    // J3D's fronts are clockwise.
+    const index = new Uint32Array(part.index.length);
+    for (let t = 0; t < index.length; t += 3) { index[t] = part.index[t]; index[t + 1] = part.index[t + 2]; index[t + 2] = part.index[t + 1]; }
+    shapes.push({ position: part.position, normal: part.normal, uv: part.uv, uv1: part.uv, color, drawIndex: new Uint16Array(count), index,
+      hasColor: true, hasNormal: true, hasUv: true, hasUv1: false, material: i });
+    for (let t = 0; t < part.index.length; t++) for (let k = 0; k < 3; k++) position.push(part.position[part.index[t] * 3 + k]);
+    for (let t = 0; t < part.index.length / 3; t++) codes.push(0);
+  });
+  const baked = levelModel.bake({ ...stageModelData, textures, materials, joints: [{ scale: [1, 1, 1], rotation: [0, 0, 0], translation: [0, 0, 0], parent: -1 }],
+    draw: [{ weighted: false, index: 0 }], envelopes: [], inverseBind: [], shapes });
+  // Its ground for walking in the editor, at its own size (the editor scales it).
+  baked.ground = { position: Float32Array.from(position), codes: Uint32Array.from(codes) };
+  return baked;
+}
+
 // --- Copied pieces ------------------------------------------------------------------
 
 // A box over a stage (x0, z0, x1, z1): the ground it stands on (the lowest
@@ -469,6 +523,11 @@ function stageModel(library, ref) {
     const id = String(ref).slice('palette|'.length), texture = userTexturesOf.get(library)?.textures.get(id);
     return library.cached(`${ref}|${texture?.cutout ? 1 : 0}|${texture?.group}`, () => userPaletteModel(library, id));
   }
+  if (String(ref).startsWith('usermodel|')) {
+    const id = String(ref).slice('usermodel|'.length);
+    if (!userModels.isUserModel(id)) return null;
+    return library.cached(ref, () => userModelBaked(library, id));
+  }
   if (String(ref).startsWith('palette|')) return library.cached(ref, () => paletteModel(library, String(ref).slice('palette|'.length)));
   if (String(ref).startsWith('prefab|')) return library.cached(ref, () => prefabModel(library, ref));
   return null;
@@ -490,6 +549,7 @@ function cleanStage(input, scenes) {
     if (!/^\d{1,4}:\d{1,7}$/.test(key) || !ID.test(String(id)) || ++count > 400000) continue;
     texturePaint[key] = String(id);
   }
+  const models = userModels.cleanUserModels(input?.models);
   const pieces = (Array.isArray(input?.pieces) ? input.pieces : []).slice(0, 4000).flatMap(piece => {
     if (!piece || !Array.isArray(piece.position) || piece.position.length !== 3 || !piece.position.every(v => finite(v))) return [];
     const uid = String(piece.uid || '').slice(0, 80), yaw = finite(piece.yaw, 1e4) ? piece.yaw : 0;
@@ -499,11 +559,16 @@ function cleanStage(input, scenes) {
       if (!parsed || !scenes.includes(parsed.scene)) return [];
       return [{ uid, kind: 'prefab', ref: prefabRef(parsed.scene, parsed.box), label, position: [...piece.position], yaw }];
     }
+    if (piece.kind === 'model') {
+      if (!userModels.isUserModel(piece.ref) || !models.some(m => m.id === piece.ref)) return [];
+      const scale = finite(piece.scale, 1e3) && piece.scale > 0 ? Math.max(0.05, Math.min(50, piece.scale)) : 1;
+      return [{ uid, kind: 'model', ref: piece.ref, label, position: [...piece.position], yaw, scale, solid: piece.solid !== false, ground: typeof piece.ground === 'string' && ID.test(piece.ground) ? piece.ground : 'stone' }];
+    }
     if (!build.KIND[piece.kind]) return [];
     const textures = { top: ID.test(piece.textures?.top) ? piece.textures.top : 'delfino-tiles', side: ID.test(piece.textures?.side) ? piece.textures.side : 'delfino-white-wall' };
     return [{ uid, kind: piece.kind, label, position: [...piece.position], yaw, size: build.cleanSize(piece.kind, piece.size), textures, ground: ID.test(piece.ground) ? piece.ground : null }];
   });
-  return { texturePaint, pieces, blank: Boolean(input?.blank), textures: cleanUserTextures(input?.textures) };
+  return { texturePaint, pieces, blank: Boolean(input?.blank), textures: cleanUserTextures(input?.textures), models };
 }
 const hasStageEdits = project => project.blank || Object.keys(project.texturePaint || {}).length > 0 || (project.pieces || []).length > 0;
 
@@ -604,7 +669,7 @@ function buildMap(library, project) {
     const triangles = [], points = [];
     for (const face of faces) {
       const records = face.p.map((world, k) => {
-        const local = transform(toHost, world), n = rotate(toHost, face.n);
+        const local = transform(toHost, world), n = rotate(toHost, face.normals ? face.normals[k] : face.n);
         points.push(local);
         const uv = face.uv ? face.uv[k] : build.planarUv(world, face.n, look.tile);
         const record = { [POS]: edit.addVertex(POS, local), [TEX0]: edit.addVertex(TEX0, [uv[0] * look.factor[0], uv[1] * look.factor[1]]) };
@@ -620,6 +685,7 @@ function buildMap(library, project) {
   };
   for (const piece of project.pieces || []) {
     if (piece.kind === 'prefab') { addPrefab(library, edit, piece, { data, materialFor: null, plain, model, addFaces, textures, toHost, hostMatrices, hostShape, bounds }); continue; }
+    if (piece.kind === 'model') { addUserModel(edit, piece, project, { plain, model, addFaces, textures }); continue; }
     const groups = new Map();
     for (const face of build.faces(piece, id => fitOf(id, project))) {
       if (!groups.has(face.texture)) groups.set(face.texture, []);
@@ -676,6 +742,43 @@ function addPrefab(library, edit, piece, context) {
   }
 }
 
+// A player's model where it's placed: each part a shape with the stage's
+// plain material showing its texture, lit as built pieces are (times the
+// model's own vertex colours).
+function placeUserModel(piece) {
+  const yaw = (piece.yaw || 0) * Math.PI / 180, c = Math.cos(yaw), s = Math.sin(yaw), k = piece.scale || 1;
+  return {
+    place: ([x, y, z]) => [piece.position[0] + (x * c + z * s) * k, piece.position[1] + y * k, piece.position[2] + (-x * s + z * c) * k],
+    turn: ([x, y, z]) => [x * c + z * s, y, -x * s + z * c],
+  };
+}
+function userModelFaces(part, piece) {
+  const { place, turn } = placeUserModel(piece), P = part.position, N = part.normal, U = part.uv, C = part.color, faces = [];
+  for (let t = 0; t < part.index.length; t += 3) {
+    const corners = [0, 1, 2].map(j => part.index[t + j]);
+    const p = corners.map(v => place([P[v * 3], P[v * 3 + 1], P[v * 3 + 2]]));
+    const e1 = [0, 1, 2].map(j => p[1][j] - p[0][j]), e2 = [0, 1, 2].map(j => p[2][j] - p[0][j]);
+    if (Math.hypot(e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]) < 1e-3) continue;  // no area
+    faces.push({ p, n: faceNormal({ position: Float32Array.from(p.flat()), index: [0, 1, 2] }, 0), corners, normals: corners.map(v => turn([N[v * 3], N[v * 3 + 1], N[v * 3 + 2]])),
+      uv: corners.map(v => [U[v * 2], U[v * 2 + 1]]), color: corners.map(v => [C[v * 4], C[v * 4 + 1], C[v * 4 + 2], C[v * 4 + 3]]) });
+  }
+  return faces;
+}
+function addUserModel(edit, piece, project, { plain, model, addFaces, textures }) {
+  const stored = (project.models || []).find(m => m.id === piece.ref);
+  if (!stored || plain === null) return;
+  const decoded = userModels.decodeModel(stored), scale = texScale(model.materials[plain.index]);
+  decoded.parts.forEach((part, i) => {
+    const key = `${stored.id}:${i}`;
+    if (!textures.has(key)) textures.set(key, edit.addTexture(userBti(part.texture, { cutout: part.cutout }), 0, `${stored.id}-${i}`));
+    const look = { material: edit.cloneMaterial(plain.index, { texture: textures.get(key), cutout: part.cutout }), factor: [1 / scale[0], 1 / scale[1]] };
+    addFaces(userModelFaces(part, piece), look, (face, k) => {
+      const light = build.shade(face.normals[k], DAYLIGHT);
+      return [0, 1, 2].map(c => light[c] * face.color[k][c] / 255).concat(face.color[k][3]);
+    });
+  });
+}
+
 // An emptied stage's sea: just the open water, without the canals,
 // waterfalls and shore foam that went with the stage's land.
 function buildSea(library, project) {
@@ -719,6 +822,13 @@ function buildGround(library, project, surfaces, defaults) {
         if (!inBox(parsed.box, groundCut, cx, cy, cz)) continue;
         add.push({ p: [0, 3, 6].map(k => place(p[t + k], p[t + k + 1], p[t + k + 2])), code: codes[t / 9] });
       }
+      continue;
+    }
+    if (piece.kind === 'model') {
+      const stored = piece.solid && (project.models || []).find(m => m.id === piece.ref);
+      if (!stored) continue;
+      for (const part of userModels.decodeModel(stored).parts)
+        for (const face of userModelFaces(part, piece)) add.push({ p: face.p, code: build.isFloor(face.n) ? codeOf(piece.ground) : stone });
       continue;
     }
     if (!build.solid(piece)) continue;
@@ -781,6 +891,6 @@ function invert(m) {
 }
 
 module.exports = {
-  PALETTE, PALETTE_GROUPS, PREFABS, palette, paletteModel, isUserTexture, cleanUserTextures, userBti, userEntry, setUserTextures, prefabs, prefabModel, prefabRef, parsePrefabRef, stageModel,
+  PALETTE, PALETTE_GROUPS, PREFABS, palette, paletteModel, isUserTexture, cleanUserTextures, userBti, userEntry, setUserTextures, setUserModels, prefabs, prefabModel, prefabRef, parsePrefabRef, stageModel,
   cleanStage, hasStageEdits, buildMap, buildGround, buildSea, openSea, plainTemplate, EMPTY_KEEPS,
 };
