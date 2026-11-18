@@ -184,6 +184,23 @@ async function download(git, args, options, label, { run, stopped = () => false,
   }
 }
 
+// Windows refuses a rename (EPERM, EACCES, EBUSY) while something still has a file of the fresh
+// download open: virus scanners and the search indexer look into new folders. Wait and try again;
+// a folder already there under the final name from an earlier try that stopped half way goes first.
+async function promote(temporary, root, wait = ms => new Promise(resolve => setTimeout(resolve, ms))) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      if (fs.existsSync(root) && !fs.existsSync(path.join(root, 'launcher-source.json')))
+        await fs.promises.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      fs.renameSync(temporary, root);
+      return;
+    } catch (error) {
+      if (attempt >= 8 || !['EPERM', 'EACCES', 'EBUSY'].includes(error.code)) throw error;
+      await wait(attempt * 500);
+    }
+  }
+}
+
 async function checkout(root, { git = 'git', run, capture, env, source = release, reference,
   stopped, wait = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
   const fetch = (args, options, label, clear) => download(git, args, options, label, { run, stopped, wait, clear });
@@ -205,7 +222,7 @@ async function checkout(root, { git = 'git', run, capture, env, source = release
       throw new Error('The downloaded game files did not match this release. Please retry.');
     // MSYS submodules may use absolute gitdir/worktree paths. Initialize them
     // after promotion so none of their paths refer to the temporary checkout.
-    fs.renameSync(temporary, root);
+    await promote(temporary, root, wait);
     promoted = true;
     // Clone decomp as plain commands rather than `git submodule update`, which
     // older Git for Windows runs as a shell script whose forks can fail (e.g.
@@ -489,4 +506,4 @@ function recoverBuild(root, settings) {
   return true;
 }
 
-module.exports = { release, gitRevision, matchesSource, identity, installed, compilerToolRoot, toolRoot, playsWithoutTools, vulkanBuiltIn, needsVulkanBuild, vulkanMissing, isCurrent, snapshotPath, eclipseSourcesPath, checkout, carryUserFiles, relinkUserFolders, pruneSnapshots, pruneBuildLeftovers, buildSafely, recoverBuild };
+module.exports = { release, gitRevision, matchesSource, identity, installed, compilerToolRoot, toolRoot, playsWithoutTools, vulkanBuiltIn, needsVulkanBuild, vulkanMissing, isCurrent, snapshotPath, eclipseSourcesPath, checkout, carryUserFiles, relinkUserFolders, pruneSnapshots, pruneBuildLeftovers, buildSafely, recoverBuild, promote };

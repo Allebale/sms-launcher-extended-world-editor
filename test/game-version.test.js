@@ -677,3 +677,19 @@ test('a version whose packs can\'t be moved stays for next time', async t => {
   assert.equal(errors.length, 1);
   assert.ok(fs.existsSync(path.join(old, 'mods', 'characters', 'buzz', 'model.szs')));
 });
+
+test('a fresh download is moved into place again while Windows still holds it', async () => {
+  const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
+  const { promote } = require('../src/game-version');
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'promote-'));
+  const from = path.join(base, 'x.download-1'), to = path.join(base, 'x');
+  fs.mkdirSync(from); fs.writeFileSync(path.join(from, 'a'), '1');
+  fs.mkdirSync(to); fs.writeFileSync(path.join(to, 'half'), '');   // left by a try that stopped half way
+  const rename = fs.renameSync;
+  let refused = 0;
+  fs.renameSync = (a, b) => { if (refused < 2) { refused++; const e = new Error('busy'); e.code = 'EPERM'; throw e; } return rename(a, b); };
+  try { await promote(from, to, async () => {}); } finally { fs.renameSync = rename; }
+  assert.equal(refused, 2);
+  assert.equal(fs.readFileSync(path.join(to, 'a'), 'utf8'), '1');
+  assert.ok(!fs.existsSync(path.join(to, 'half')));
+});
