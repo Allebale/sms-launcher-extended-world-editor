@@ -10,7 +10,8 @@
       "World editor: add your own pictures as textures to paint and build with, under Your textures in Paint and Build. Pick their footsteps, how big one repeat is and whether they're see-through, and they're saved in the level file so they travel with it.",
       "World editor: add your own 3D models (a .glb from Blender, up to 100,000 triangles) with Add your own 3D model in Build, then place them from the catalog under Your models; turn and scale them, make them solid to walk on, and they're built into the stage when you export or play.",
       "World editor: retexture NPCs, enemies and objects: select one and give any of its textures your own picture under Textures (Save one first to paint over it). Everything in the level using the same model changes, in the editor and in the game.",
-      "World editor: fixed levels with a lot of added ground, such as big 3D models or many built pieces, crashing the game as they load."
+      "World editor: fixed levels with a lot of added ground, such as big 3D models or many built pieces, crashing the game as they load.",
+      "World editor: your own 3D models now show their textures exactly as they were made, in the editor and in the game. Models with one big texture for everything (most models from Sketchfab) had their colours shifted onto the wrong parts. Models made to be unlit, with their light already painted into their texture, are no longer darkened again."
     ],
     "game": [
       "Split-screen co-op: jumping while carrying the other player no longer pushes you sideways.",

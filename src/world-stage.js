@@ -108,6 +108,27 @@ function texScale(material) {
   return m ? [Math.abs(m.scale[0]) || 1, Math.abs(m.scale[1]) || 1] : [1, 1];
 }
 
+// The game's texture matrix for a material's first coordinates, as u' = a·u + b·v + c, v' = d·u + e·v + f
+// (J3DGetTextureMtx: scaled and turned about its centre, then moved); null: none.
+function texAffine(material) {
+  const gen = material.texGens?.[0];
+  const m = gen && gen.matrix >= 30 && gen.matrix <= 57 ? material.texMatrices?.[(gen.matrix - 30) / 3] : null;
+  if (!m) return null;
+  const [sx, sy] = m.scale, [cx, cy] = m.center, cos = Math.cos(m.rotation), sin = Math.sin(m.rotation);
+  const a = sx * cos, b = -sx * sin, d = sy * sin, e = sy * cos;
+  return [a, b, m.translation[0] + cx - (a * cx + b * cy), d, e, m.translation[1] + cy - (d * cx + e * cy)];
+}
+// Coordinates that the matrix turns into `uv`: a model's own, laid exactly as it was made.
+function untexAffine(material) {
+  const m = texAffine(material);
+  if (!m) return null;
+  const [a, b, c, d, e, f] = m, det = a * e - b * d;
+  if (Math.abs(det) < 1e-9) return null;
+  return ([u, v]) => [(e * (u - c) - b * (v - f)) / det, (a * (v - f) - d * (u - c)) / det];
+}
+// A material's texture matrices left out: the coordinates drawn as they are.
+const plainTexMatrices = material => (material.texMatrices || []).map(m => m && { ...m, scale: [1, 1], rotation: 0, translation: [0, 0] });
+
 // How a material is laid on a stage: world units per texture repeat, its
 // usual vertex colour (the light baked into the stage) and how much it covers.
 function materialUsage(model, material) {
@@ -392,12 +413,13 @@ function userModelBaked(library, id) {
   const textures = [], materials = [], shapes = [], position = [], codes = [];
   model.parts.forEach((part, i) => {
     textures.push({ name: `${id}-${i}`, width: part.texture.width, height: part.texture.height, rgba: part.texture.rgba, wrapS: 1, wrapT: 1, mipmapped: true });
-    const material = { ...template, textures: [i, ...template.textures.slice(1).map(() => -1)], texMatrices: (template.texMatrices || []).map(m => m && { ...m, scale: [1, 1] }) };
+    // its own coordinates as they are: the stage material's matrix (often moved or turned) left out
+    const material = { ...template, textures: [i, ...template.textures.slice(1).map(() => -1)], texMatrices: plainTexMatrices(template) };
     if (part.cutout) material.alphaTest = { comp0: 6, ref0: 128, op: 0, comp1: 3, ref1: 255 };
     materials.push(material);
     const count = part.position.length / 3, color = new Float32Array(count * 4);
     for (let v = 0; v < count; v++) {
-      const light = build.shade([part.normal[v * 3], part.normal[v * 3 + 1], part.normal[v * 3 + 2]], DAYLIGHT);
+      const light = part.unlit ? [255, 255, 255] : build.shade([part.normal[v * 3], part.normal[v * 3 + 1], part.normal[v * 3 + 2]], DAYLIGHT);
       for (let k = 0; k < 3; k++) color[v * 4 + k] = light[k] / 255 * part.color[v * 4 + k] / 255;
       color[v * 4 + 3] = part.color[v * 4 + 3] / 255;
     }
@@ -692,7 +714,7 @@ function buildMap(library, project) {
         const local = transform(toHost, world), n = rotate(toHost, face.normals ? face.normals[k] : face.n);
         points.push(local);
         const uv = face.uv ? face.uv[k] : build.planarUv(world, face.n, look.tile);
-        const record = { [POS]: edit.addVertex(POS, local), [TEX0]: edit.addVertex(TEX0, [uv[0] * look.factor[0], uv[1] * look.factor[1]]) };
+        const record = { [POS]: edit.addVertex(POS, local), [TEX0]: edit.addVertex(TEX0, look.uv ? look.uv(uv) : [uv[0] * look.factor[0], uv[1] * look.factor[1]]) };
         if (edit.hasArray(NRM)) record[NRM] = edit.addVertex(NRM, n);
         if (edit.hasArray(CLR0)) record[CLR0] = edit.addVertex(CLR0, colorOf(face, k));
         return record;
@@ -787,12 +809,14 @@ function userModelFaces(part, piece) {
 function addUserModel(edit, piece, project, { plain, model, addFaces, textures }) {
   const stored = (project.models || []).find(m => m.id === piece.ref);
   if (!stored || plain === null) return;
-  const decoded = userModels.decodeModel(stored), scale = texScale(model.materials[plain.index]);
+  // its coordinates through the inverse of the stage material's matrix, so the game lays them as made
+  const decoded = userModels.decodeModel(stored), scale = texScale(model.materials[plain.index]), uv = untexAffine(model.materials[plain.index]);
   decoded.parts.forEach((part, i) => {
     const key = `${stored.id}:${i}`;
     if (!textures.has(key)) textures.set(key, edit.addTexture(userBti(part.texture, { cutout: part.cutout }), 0, `${stored.id}-${i}`));
-    const look = { material: edit.cloneMaterial(plain.index, { texture: textures.get(key), cutout: part.cutout }), factor: [1 / scale[0], 1 / scale[1]] };
+    const look = { material: edit.cloneMaterial(plain.index, { texture: textures.get(key), cutout: part.cutout }), factor: [1 / scale[0], 1 / scale[1]], uv };
     addFaces(userModelFaces(part, piece), look, (face, k) => {
+      if (part.unlit) return face.color[k].slice(0, 4);  // its light is in its texture already
       const light = build.shade(face.normals[k], DAYLIGHT);
       return [0, 1, 2].map(c => light[c] * face.color[k][c] / 255).concat(face.color[k][3]);
     });
@@ -912,5 +936,5 @@ function invert(m) {
 
 module.exports = {
   PALETTE, PALETTE_GROUPS, PREFABS, palette, paletteModel, isUserTexture, cleanUserTextures, userBti, userEntry, setUserTextures, setUserModels, cleanRetextures, retextureImage, prefabs, prefabModel, prefabRef, parsePrefabRef, stageModel,
-  cleanStage, hasStageEdits, buildMap, buildGround, buildSea, openSea, plainTemplate, EMPTY_KEEPS,
+  cleanStage, hasStageEdits, buildMap, buildGround, buildSea, openSea, plainTemplate, EMPTY_KEEPS, texAffine, untexAffine, plainTexMatrices,
 };

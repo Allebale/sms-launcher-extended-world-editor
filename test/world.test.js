@@ -337,14 +337,14 @@ test('players\' own textures are kept checked, and written as the game\'s compre
 });
 
 // A binary glTF with one node (moved 2 m up, mirrored on x) holding a red 1 × 1 m square.
-function squareGlb() {
+function squareGlb({ unlit = false } = {}) {
   const positions = Float32Array.from([0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1]), indices = Uint16Array.from([0, 2, 1, 0, 3, 2]);
   const bin = Buffer.concat([Buffer.from(positions.buffer), Buffer.from(indices.buffer)]);
   const json = {
     asset: { version: '2.0' }, scene: 0, scenes: [{ nodes: [0] }],
     nodes: [{ mesh: 0, translation: [0, 2, 0], scale: [-1, 1, 1] }],
     meshes: [{ primitives: [{ attributes: { POSITION: 0 }, indices: 1, material: 0 }] }],
-    materials: [{ pbrMetallicRoughness: { baseColorFactor: [1, 0, 0, 1] } }],
+    materials: [{ pbrMetallicRoughness: { baseColorFactor: [1, 0, 0, 1] }, ...(unlit ? { extensions: { KHR_materials_unlit: {} } } : {}) }],
     buffers: [{ byteLength: bin.length }],
     bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: 48 }, { buffer: 0, byteOffset: 48, byteLength: 12 }],
     accessors: [{ bufferView: 0, componentType: 5126, count: 4, type: 'VEC3', min: [0, 0, 0], max: [1, 0, 1] }, { bufferView: 1, componentType: 5123, count: 6, type: 'SCALAR' }],
@@ -437,4 +437,28 @@ test('ground added to a stage grows the pools its Map entry gives the game for i
   const same = { ...map, data: ints([0, 16, 16, 100, 300, 10, 0]) };
   world.growCollisionPools({ files: () => new Map([['map/map.col', small]]) }, { base: 'home' }, { ...tree, children: [same] }, small);
   assert.deepEqual([same.data.readInt32BE(12), same.data.readInt32BE(16)], [100, 300]);
+});
+
+test('players\' models keep their own texture coordinates and unlit look on any stage material', () => {
+  const stage = require('../src/world-stage'), models = require('../src/world-model');
+  // A stage material whose texture matrix is scaled, turned about a centre and moved, as many are.
+  const material = { texGens: [{ type: 1, source: 4, matrix: 30 }], texMatrices: [{ info: 0, center: [0.5, 0.5, 0], scale: [0.25, 0.5], rotation: 0.7, translation: [0.3, -0.2] }] };
+  const [a, b, c, d, e, f] = stage.texAffine(material), back = stage.untexAffine(material);
+  for (const uv of [[0, 0], [1, 0], [0.37, 0.81]]) {
+    const s = back(uv), out = [a * s[0] + b * s[1] + c, d * s[0] + e * s[1] + f];
+    assert.ok(Math.abs(out[0] - uv[0]) < 1e-9 && Math.abs(out[1] - uv[1]) < 1e-9, `${uv} came back as ${out}`);
+  }
+  // In the editor the matrix is left out: identity.
+  const plain = stage.texAffine({ ...material, texMatrices: stage.plainTexMatrices(material) });
+  assert.deepEqual(plain.map(v => Math.round(v * 1e9) / 1e9 + 0), [1, 0, 0, 0, 1, 0]);
+  assert.equal(stage.untexAffine({}), null);
+
+  // KHR_materials_unlit is kept from the .glb to the level file and back.
+  const read = models.readGlb(squareGlb({ unlit: true }), () => { throw new Error('no pictures here'); });
+  assert.equal(read.parts[0].unlit, true);
+  const stored = models.encodeModel({ id: 'model-00000000000a', label: 'Unlit', ...read });
+  const [clean] = models.cleanUserModels([stored]);
+  assert.equal(clean.parts[0].unlit, true);
+  assert.equal(models.decodeModel(clean).parts[0].unlit, true);
+  assert.equal(models.readGlb(squareGlb(), () => null).parts[0].unlit, false);
 });

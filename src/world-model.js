@@ -36,7 +36,7 @@ function swatch([r, g, b, a]) {
   return { width: 8, height: 8, rgba };
 }
 
-// The model from a .glb: { parts: [{ texture, cutout, position, normal, uv, color, index }], size }.
+// The model from a .glb: { parts: [{ texture, cutout, unlit, position, normal, uv, color, index }], size }.
 // `decodeImage(bytes)` turns an embedded picture into { width, height, rgba }
 // with sides a power of two (the main process does it with Chromium).
 // Positions are in game units, standing on y = 0 and centred on x and z;
@@ -118,6 +118,8 @@ function readGlb(data, decodeImage) {
     const color = Uint8Array.from(part.color.map((v, i) => Math.round(Math.max(0, Math.min(1, v * (texture ? factor[i % 4] : 1))) * 255)));
     return {
       texture: texture || swatch(factor), cutout: m.alphaMode === 'MASK' || m.alphaMode === 'BLEND',
+      // KHR_materials_unlit: its light painted into its texture, so none added
+      unlit: Boolean(m.extensions?.KHR_materials_unlit),
       position: Float32Array.from(part.position), normal: Float32Array.from(part.normal), uv: Float32Array.from(part.uv),
       color, index: Uint32Array.from(part.index),
     };
@@ -139,7 +141,7 @@ function encodeModel({ id, label, parts, triangles, size }) {
   return {
     id, label, triangles, size,
     parts: parts.map(part => ({
-      png: writePng(part.texture.width, part.texture.height, part.texture.rgba).toString('base64'), cutout: part.cutout,
+      png: writePng(part.texture.width, part.texture.height, part.texture.rgba).toString('base64'), cutout: part.cutout, ...(part.unlit ? { unlit: true } : {}),
       position: b64(part.position), normal: b64(part.normal), uv: b64(part.uv), color: b64(part.color), index: b64(part.index),
     })),
   };
@@ -152,7 +154,7 @@ function cleanUserModels(input) {
   for (const model of (Array.isArray(input) ? input : []).slice(0, MAX_MODELS * 2)) {
     if (!model || !isUserModel(model.id) || seen.has(model.id) || !Array.isArray(model.parts) || !model.parts.length || model.parts.length > MAX_PARTS) continue;
     const parts = model.parts.map(part => part && ['png', 'position', 'normal', 'uv', 'color', 'index'].every(k => typeof part[k] === 'string')
-      ? { png: part.png, cutout: Boolean(part.cutout), position: part.position, normal: part.normal, uv: part.uv, color: part.color, index: part.index } : null);
+      ? { png: part.png, cutout: Boolean(part.cutout), ...(part.unlit ? { unlit: true } : {}), position: part.position, normal: part.normal, uv: part.uv, color: part.color, index: part.index } : null);
     if (parts.some(p => !p)) continue;
     const triangles = parts.reduce((n, p) => n + Buffer.from(p.index, 'base64').length / 12, 0);
     if (!(triangles > 0) || triangles > MAX_TRIANGLES) continue;
@@ -177,7 +179,7 @@ function decodeModel(model) {
       throw new Error(`${model.label}: the model in this level file is damaged.`);
     const texture = readPng(Buffer.from(part.png, 'base64'));
     if (!powerOfTwo(texture.width) || !powerOfTwo(texture.height)) throw new Error(`${model.label}: its textures' sides must be powers of two from 8 to 512.`);
-    return { texture, cutout: part.cutout, position, normal, uv, color, index };
+    return { texture, cutout: part.cutout, unlit: part.unlit, position, normal, uv, color, index };
   });
   const out = { ...model, parts };
   decoded.set(model.id, out);
