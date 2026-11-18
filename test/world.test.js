@@ -337,17 +337,22 @@ test('players\' own textures are kept checked, and written as the game\'s compre
 });
 
 // A binary glTF with one node (moved 2 m up, mirrored on x) holding a red 1 × 1 m square.
-function squareGlb({ unlit = false } = {}) {
-  const positions = Float32Array.from([0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1]), indices = Uint16Array.from([0, 2, 1, 0, 3, 2]);
+function squareGlb({ unlit = false, unused = false, ps2 = false } = {}) {
+  // `unused`: a far corner no triangle uses, as some exporters leave in
+  const positions = Float32Array.from([0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1, ...(unused ? [50, 50, 50] : [])]), indices = Uint16Array.from([0, 2, 1, 0, 3, 2]);
   const bin = Buffer.concat([Buffer.from(positions.buffer), Buffer.from(indices.buffer)]);
   const json = {
     asset: { version: '2.0' }, scene: 0, scenes: [{ nodes: [0] }],
     nodes: [{ mesh: 0, translation: [0, 2, 0], scale: [-1, 1, 1] }],
     meshes: [{ primitives: [{ attributes: { POSITION: 0 }, indices: 1, material: 0 }] }],
-    materials: [{ pbrMetallicRoughness: { baseColorFactor: [1, 0, 0, 1] }, ...(unlit ? { extensions: { KHR_materials_unlit: {} } } : {}) }],
+    materials: [ps2
+      // as OpenGOAL exports Jak and Daxter: PS2 textures (128 full) doubled, cut out at its own alpha
+      ? { alphaMode: 'MASK', alphaCutoff: 0.15, pbrMetallicRoughness: { baseColorFactor: [2, 2, 2, 2], baseColorTexture: { index: 0 } } }
+      : { pbrMetallicRoughness: { baseColorFactor: [1, 0, 0, 1] }, ...(unlit ? { extensions: { KHR_materials_unlit: {} } } : {}) }],
+    ...(ps2 ? { images: [{ uri: 'data:image/png;base64,AA==' }], textures: [{ source: 0 }] } : {}),
     buffers: [{ byteLength: bin.length }],
-    bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: 48 }, { buffer: 0, byteOffset: 48, byteLength: 12 }],
-    accessors: [{ bufferView: 0, componentType: 5126, count: 4, type: 'VEC3', min: [0, 0, 0], max: [1, 0, 1] }, { bufferView: 1, componentType: 5123, count: 6, type: 'SCALAR' }],
+    bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: positions.byteLength }, { buffer: 0, byteOffset: positions.byteLength, byteLength: 12 }],
+    accessors: [{ bufferView: 0, componentType: 5126, count: positions.length / 3, type: 'VEC3', min: [0, 0, 0], max: unused ? [50, 50, 50] : [1, 0, 1] }, { bufferView: 1, componentType: 5123, count: 6, type: 'SCALAR' }],
   };
   let text = Buffer.from(JSON.stringify(json));
   text = Buffer.concat([text, Buffer.alloc((4 - text.length % 4) % 4, 0x20)]);
@@ -461,6 +466,14 @@ test('players\' models keep their own texture coordinates and unlit look on any 
   assert.equal(clean.parts[0].unlit, true);
   assert.equal(models.decodeModel(clean).parts[0].unlit, true);
   assert.equal(models.readGlb(squareGlb(), () => null).parts[0].unlit, false);
+  // Corners no triangle uses are left out: they'd move and size the model.
+  const lean = models.readGlb(squareGlb({ unused: true }), () => null);
+  assert.deepEqual([lean.parts[0].position.length / 3, lean.size], [4, [100, 0, 100]]);
+  // The colour factor goes into the texture, and a cut-out's alpha is all or nothing at its alphaCutoff.
+  const ps2 = models.readGlb(squareGlb({ ps2: true }), () => ({ width: 8, height: 8, rgba: Uint8Array.from({ length: 256 }, (_, i) => i % 4 === 3 ? (i < 128 ? 128 : 10) : 100) }));
+  const rgba = ps2.parts[0].texture.rgba;
+  assert.deepEqual([rgba[0], rgba[3], rgba[255]], [200, 255, 0]);
+  assert.deepEqual(Array.from(ps2.parts[0].color.subarray(0, 4)), [255, 255, 255, 255]);
   // How its texture repeats is kept too (clamped across, mirrored down), and bad values become repeat.
   const wrapped = models.cleanUserModels([{ ...stored, parts: [{ ...stored.parts[0], wrap: [0, 2] }] }, { ...stored, id: 'model-00000000000b', parts: [{ ...stored.parts[0], wrap: [5, 'x'] }] }]);
   assert.deepEqual(wrapped.map(m => m.parts[0].wrap), [[0, 2], [1, 1]]);

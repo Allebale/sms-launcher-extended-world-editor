@@ -12,7 +12,8 @@
       "World editor: retexture NPCs, enemies and objects: select one and give any of its textures your own picture under Textures (Save one first to paint over it). Everything in the level using the same model changes, in the editor and in the game.",
       "World editor: fixed levels with a lot of added ground, such as big 3D models or many built pieces, crashing the game as they load.",
       "World editor: your own 3D models now show their textures exactly as they were made, in the editor and in the game. Models with one big texture for everything (most models from Sketchfab) had their colours shifted onto the wrong parts. Models made to be unlit, with their light already painted into their texture, are no longer darkened again.",
-      "World editor: your own 3D models are no longer drawn inside out in the editor (they were right in the game), and textures that should stop at their edges or are moved by the model (such as Mario 64 Mario's face) no longer repeat across the model."
+      "World editor: your own 3D models are no longer drawn inside out in the editor (they were right in the game), and textures that should stop at their edges or are moved by the model (such as Mario 64 Mario's face) no longer repeat across the model.",
+      "World editor: models exported from games (such as Jak and Daxter through OpenGOAL) now show up: unused corners no longer push the model far from where you place it, their textures' colour and see-through settings are followed, and they load much smaller."
     ],
     "game": [
       "Split-screen co-op: jumping while carrying the other player no longer pushes you sideways.",

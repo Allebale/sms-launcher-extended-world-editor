@@ -94,8 +94,10 @@ function readGlb(data, decodeImage) {
         const wrapOf = mode => mode === 33071 ? 0 : mode === 33648 ? 2 : 1;
         byMaterial.get(material).wrap = [wrapOf(sampler?.wrapS), wrapOf(sampler?.wrapT)];
       }
-      const part = byMaterial.get(material), base = part.position.length / 3;
-      for (let v = 0; v < count; v++) {
+      // only the corners its triangles use (exporters such as OpenGOAL's give every primitive all of the mesh's)
+      const part = byMaterial.get(material), base = part.position.length / 3, at = new Map();
+      for (const v of index) if (!at.has(v) && v >= 0 && v < count) at.set(v, at.size);
+      for (const v of at.keys()) {
         const x = p[v * 3], y = p[v * 3 + 1], z = p[v * 3 + 2];
         part.position.push(M[0] * x + M[1] * y + M[2] * z + M[3], M[4] * x + M[5] * y + M[6] * z + M[7], M[8] * x + M[9] * y + M[10] * z + M[11]);
         const nx = n[v * 3], ny = n[v * 3 + 1], nz = n[v * 3 + 2];
@@ -108,7 +110,7 @@ function readGlb(data, decodeImage) {
       // A mirrored node (negative scale) turns its faces inside out: put them back.
       const det = M[0] * (M[5] * M[10] - M[6] * M[9]) - M[1] * (M[4] * M[10] - M[6] * M[8]) + M[2] * (M[4] * M[9] - M[5] * M[8]);
       for (let t = 0; t + 2 < index.length; t += 3)
-        part.index.push(...(det < 0 ? [index[t], index[t + 2], index[t + 1]] : [index[t], index[t + 1], index[t + 2]]).map(v => v + base));
+        if (at.has(index[t]) && at.has(index[t + 1]) && at.has(index[t + 2])) part.index.push(...(det < 0 ? [index[t], index[t + 2], index[t + 1]] : [index[t], index[t + 1], index[t + 2]]).map(v => at.get(v) + base));
     }
   });
   if (!byMaterial.size || !triangles) throw new Error('The model has no meshes to show.');
@@ -127,9 +129,20 @@ function readGlb(data, decodeImage) {
     if (source !== undefined) {
       if (!images.has(source)) images.set(source, decodeImage(glb.image(source).bytes));
       texture = images.get(source);
+      // The colour factor multiplies the texture itself (OpenGOAL's 2 doubles PS2 textures, whose full is 128),
+      // and a cut-out's alpha becomes all or nothing at its alphaCutoff.
+      const mask = m.alphaMode === 'MASK', cutoff = (m.alphaCutoff ?? 0.5) * 255;
+      if (texture && (mask || factor.some(f => f !== 1))) {
+        const rgba = new Uint8Array(texture.rgba.length);
+        for (let i = 0; i < rgba.length; i++) {
+          const v = texture.rgba[i] * factor[i % 4];
+          rgba[i] = i % 4 === 3 && mask ? (v >= cutoff ? 255 : 0) : Math.round(Math.max(0, Math.min(255, v)));
+        }
+        texture = { ...texture, rgba };
+      }
     }
-    // The colour goes into the vertex colours over a texture, else becomes the texture.
-    const color = Uint8Array.from(part.color.map((v, i) => Math.round(Math.max(0, Math.min(1, v * (texture ? factor[i % 4] : 1))) * 255)));
+    // Over a texture the vertex colours are the model's own; without one the colour becomes the texture.
+    const color = Uint8Array.from(part.color.map(v => Math.round(Math.max(0, Math.min(1, v)) * 255)));
     return {
       texture: texture || swatch(factor), cutout: m.alphaMode === 'MASK' || m.alphaMode === 'BLEND',
       // KHR_materials_unlit: its light painted into its texture, so none added
