@@ -435,7 +435,7 @@ test('ground added to a stage grows the pools its Map entry gives the game for i
   const tree = { type: 'GroupObj', nameBytes: Buffer.from('root'), data: Buffer.alloc(0), children: [map] };
   world.growCollisionPools({ files: () => new Map([['map/map.col', small]]) }, { base: 'home' }, tree, big);
   const [triangles, lists] = [map.data.readInt32BE(24), map.data.readInt32BE(28)];
-  assert.ok(triangles >= 101 && triangles < 400, `triangles ${triangles}`);
+  assert.ok(triangles >= 101 && triangles < 3000, `triangles ${triangles}`);
   assert.ok(lists >= 300 + 9, `lists ${lists}`);
   assert.deepEqual([map.data.readInt32BE(16), map.data.readInt32BE(32), map.data.readInt32BE(36)], [16, 10, 0]);  // the rest as it was
   // Nothing added, nothing grows.

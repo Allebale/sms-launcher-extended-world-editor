@@ -1288,13 +1288,16 @@ function addSeparateObjects(library, tree, separate) {
 // entries, a triangle taking one in each cell its box covers). Ground added
 // to the stage would run past them, into the moving objects' lists, and the
 // game crashes as it loads: they grow by what was added, with room to spare.
+// As TMapCollisionData::getGridArea counts them: walls take cells 80 units past their box too
+// (counted for every triangle here, to be safe), and triangles off the grid none.
 function collisionUse(col, gridX, gridZ) {
   const { position: p } = collisionFile.parse(col);
   const half = [gridX / 2 * 1024, gridZ / 2 * 1024], cell = (v, k) => Math.max(0, Math.min((k ? gridZ : gridX) - 1, Math.floor((v + half[k]) / 1024)));
   let lists = 0;
   for (let t = 0; t < p.length; t += 9) {
     const xs = [p[t], p[t + 3], p[t + 6]], zs = [p[t + 2], p[t + 5], p[t + 8]];
-    lists += (cell(Math.max(...xs), 0) - cell(Math.min(...xs), 0) + 1) * (cell(Math.max(...zs), 1) - cell(Math.min(...zs), 1) + 1);
+    if (Math.max(...xs) < -half[0] || Math.max(...zs) < -half[1] || Math.min(...xs) > half[0] || Math.min(...zs) > half[1]) continue;
+    lists += (cell(Math.max(...xs) + 80, 0) - cell(Math.min(...xs) - 80, 0) + 1) * (cell(Math.max(...zs) + 80, 1) - cell(Math.min(...zs) - 80, 1) + 1);
   }
   return { triangles: p.length / 9, lists };
 }
@@ -1316,7 +1319,8 @@ function growCollisionPools(library, project, tree, col, separate = []) {
     const use = collisionUse(placed, gridX, gridZ);
     after.triangles += use.triangles; after.lists += use.lists;
   }
-  const grow = (current, more) => more > 0 ? current + more + Math.ceil(more / 4) + 256 : current;
+  // with room to spare: what the stage's objects add later (wires, moving ground) shares these
+  const grow = (current, more) => more > 0 ? current + more + Math.ceil(more / 2) + 2048 : current;
   data.writeInt32BE(grow(triangles, after.triangles - before.triangles), at + 8);
   data.writeInt32BE(grow(lists, after.lists - before.lists), at + 12);
 }

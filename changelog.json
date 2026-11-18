@@ -15,7 +15,8 @@
       "World editor: your own 3D models are no longer drawn inside out in the editor (they were right in the game), and textures that should stop at their edges or are moved by the model (such as Mario 64 Mario's face) no longer repeat across the model.",
       "World editor: models exported from games (such as Jak and Daxter through OpenGOAL) now show up: unused corners no longer push the model far from where you place it, their textures' colour and see-through settings are followed, and they load much smaller.",
       "World editor: a Budget panel shows how much of the game's limits your level uses (a stage model and its ground hold up to 65,536 corners each); big models can go in model files of their own with their own limits (up to 5 a level, on by itself for models over 20,000 triangles); and Plain level at the top of the Stage list starts from nothing but Mario's start.",
-      "World editor: Add your own 3D model also takes OBJ models (.obj), with their materials (.mtl) and pictures from the same folder."
+      "World editor: Add your own 3D model also takes OBJ models (.obj), with their materials (.mtl) and pictures from the same folder.",
+      "World editor: fixed levels with a lot of new ground (big solid models) crashing the game as they load."
     ],
     "game": [
       "Split-screen co-op: jumping while carrying the other player no longer pushes you sideways.",
