@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld('sms', {
   worldDelete: file => ipcRenderer.invoke('world-delete', file),
   worldImport: () => ipcRenderer.invoke('world-import'),
   worldExport: (project, kind) => ipcRenderer.invoke('world-export', project, kind),
+  worldBudget: project => ipcRenderer.invoke('world-budget', project),
   worldPlay: project => ipcRenderer.invoke('world-play', project),
   worldRelease: () => ipcRenderer.invoke('world-release'),
   worldTextureImport: () => ipcRenderer.invoke('world-texture-import'),

@@ -479,3 +479,67 @@ test('players\' models keep their own texture coordinates and unlit look on any 
   assert.deepEqual(wrapped.map(m => m.parts[0].wrap), [[0, 2], [1, 1]]);
   assert.equal(stage.userBti({ width: 8, height: 8, rgba: new Uint8Array(256) }, { wrap: [0, 2] }).readUInt16BE(6), 0x0002);
 });
+
+test('a plain level has no sea, only a floor far below that ends a fall', () => {
+  const plain = project({ plain: true, pieces: [{ uid: 'f', kind: 'floor', position: [0, -500, 0], yaw: 0, size: [1000, 100, 1000], textures: { top: 'delfino-tiles', side: 'delfino-white-wall' }, ground: 'stone' }] });
+  assert.equal(plain.blank, true);
+  const ground = require('../src/collision').parse(world.buildCollision(library(), plain));
+  const deaths = [...ground.codes.keys()].filter(i => Math.floor(ground.codes[i] / 256) === 0x0800);
+  assert.equal(deaths.length, 2);
+  // below the lowest built ground, by 2,000
+  assert.ok(ground.position[deaths[0] * 9 + 1] <= -2500 - 100 + 1);
+});
+
+test('big models go in files of their own: the names the stage leaves free, shown by MapStaticObj objects where each copy stands', () => {
+  const stage = require('../src/world-stage');
+  const { node: n, actor: a, str: s } = require('./world-fixture');
+  const tree = sceneBin.parse(n('GroupObj', 'root', Buffer.alloc(0), [
+    n('IdxGroup', 'マップグループ', u32(1), [a('MapStaticObj', 'river', [0, 0, 0], s('MonteRiver'))]),
+  ]));
+  const lib = { sceneTree: () => tree, scenes: () => ['monte0'] };
+  // The stage's own MonteRiver stays its own; Noki Bay keeps Mare5ExGate.
+  assert.deepEqual(stage.freeSlots(lib, 'monte0').map(x => x.name), ['mareSeaPollutionS0', 'mareSeaPollutionS12', 'BiancoRiver', 'Mare5ExGate']);
+  assert.ok(!stage.freeSlots(lib, 'mare0').some(x => x.name === 'Mare5ExGate'));
+  // Solid models take the names with ground first; past the free names, the stage model as usual.
+  const models = ['a', 'b', 'c', 'd', 'e', 'f'].map((id, i) => ({ id: `model-00000000000${id}`, label: id, separate: true, solid: i < 2 }));
+  const pieces = models.map((m, i) => ({ kind: 'model', ref: m.id, position: [i, 0, 0], yaw: 0, scale: 1, solid: m.solid }));
+  const chosen = stage.separateModels(lib, { base: 'monte0', models, pieces });
+  assert.equal(chosen.length, 4);
+  assert.deepEqual(chosen.filter(c => c.slot.ground).map(c => c.model.label).sort(), ['a', 'b']);
+});
+
+test('the stage model\'s vertex arrays can be counted and emptied, with positions turned to floats', { skip: !process.env.SMS_TEST_DISC || !fs.existsSync(process.env.SMS_TEST_DISC) }, () => {
+  const { BmdEdit } = require('../src/bmd-edit');
+  const lib = new world.Library(process.env.SMS_TEST_DISC);
+  const edit = new BmdEdit(lib.files('dolpic0').get('map/map/map.bmd'));
+  assert.ok(edit.usage()[9] > 1000);
+  for (let s = 0; s < edit.shapes.length; s++) edit.removeTriangles(s, edit.shapeTriangles(s).map((_, i) => i));
+  edit.clearVertices([9]);
+  assert.equal(edit.usage()[9], 0);
+  assert.equal(edit.addVertex(9, [123456.5, 0, -99999]), 0);
+  const again = new BmdEdit(edit.write());
+  assert.equal(again.usage()[9], 1);
+});
+
+test('on a real disc, a model in a file of its own exports its model, its ground and an object for each copy', { skip: !process.env.SMS_TEST_DISC || !fs.existsSync(process.env.SMS_TEST_DISC) }, () => {
+  const archive = require('../src/archive'), models = require('../src/world-model'), j3d = require('../src/j3d');
+  const lib = new world.Library(process.env.SMS_TEST_DISC);
+  const read = models.readGlb(squareGlb(), () => null);
+  const stored = { ...models.encodeModel({ id: 'model-0123456789ab', label: 'Square', ...read }), separate: true };
+  const level = world.cleanProject({ format: 'sms-world', base: 'dolpic0', models: [stored], pieces: [
+    { uid: 'a', kind: 'model', ref: stored.id, position: [0, 500, 0], yaw: 45, scale: 2, solid: true },
+    { uid: 'b', kind: 'model', ref: stored.id, position: [900, 500, 0], yaw: 0, scale: 1, solid: true },
+  ] }, lib.scenes());
+  const files = archive.rarc(archive.yaz0(world.buildArchive(lib, level).data));
+  const slot = require('../src/world-stage').freeSlots(lib, 'dolpic0').find(s => s.ground).name;
+  const own = j3d.parseBmd(files.get(`map/map/${slot.toLowerCase()}.bmd`) || files.get(`map/map/${slot}.bmd`));
+  assert.ok(own.textures.every(t => t.width <= 8 || t.name.startsWith('model-')));
+  assert.ok(files.has(`map/map/${slot.toLowerCase()}.col`) || files.has(`map/map/${slot}.col`));
+  const scene = sceneBin.parse(files.get('map/scene.bin'));
+  let copies = 0;
+  sceneBin.walk(scene, node => { if (node.type === 'MapStaticObj' && node.data.includes(Buffer.from(slot))) copies++; });
+  assert.equal(copies, 2);
+  const budget = world.levelBudget(lib, level);
+  assert.equal(budget.separate.length, 1);
+  assert.ok(budget.model.positions > 1000);
+});

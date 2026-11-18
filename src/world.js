@@ -1243,8 +1243,43 @@ function buildScene(library, project) {
       : `${who} needs ${need.what}, found in ${need.where}, and the game crashes without ${need.names?.length > 1 ? 'them' : 'it'}. Remove it, or place ${need.names?.length > 1 ? 'them' : 'it'} too, to export or play this level.`);
   }
   const raised = fitManagers(tree);
-  if (Object.keys(project.paint).length || stage.hasStageEdits(project)) growCollisionPools(library, project, tree, buildCollision(library, project));
-  return { tree, needs, raised };
+  // Models in files of their own: an object showing the model (and setting its ground) where each copy stands.
+  const separate = stage.hasStageEdits(project) ? stage.buildSeparate(library, project, SURFACES) : [];
+  if (separate.length) addSeparateObjects(library, tree, separate);
+  if (Object.keys(project.paint).length || stage.hasStageEdits(project)) growCollisionPools(library, project, tree, buildCollision(library, project), separate);
+  return { tree, needs, raised, separate };
+}
+
+// A MapStaticObj from the disc to copy for models in files of their own: its data up to its table
+// name (transform, TActor's name and light map), and the group it's in.
+function staticObjTemplate(library) {
+  for (const scene of library.scenes()) {
+    let found = null;
+    const tree = library.sceneTree(scene);
+    sceneBin.walk(tree, (node, id) => {
+      if (found || node.children || node.type !== 'MapStaticObj') return;
+      const end = actorNamesEnd(node.data, 1);
+      if (end > 0) found = { node, head: node.data.subarray(0, end), parent: sceneBin.find(tree, id.split('/').slice(0, -1).join('/')) };
+    });
+    if (found) return found;
+  }
+  throw new Error('Couldn\'t find the game object that shows models in files of their own on your disc.');
+}
+function addSeparateObjects(library, tree, separate) {
+  const template = staticObjTemplate(library);
+  const parent = findGroup(tree, template.parent);
+  let n = 0;
+  for (const { slot, pieces } of separate)
+    for (const piece of pieces) {
+      const name = Buffer.from(slot.name, 'latin1'), length = Buffer.alloc(2);
+      length.writeUInt16BE(name.length);
+      const node = cloneNode(template.node);
+      node.nameBytes = Buffer.from(`UserModel${++n}`, 'latin1');
+      node.data = Buffer.concat([Buffer.from(template.head), length, name]);
+      const k = piece.scale || 1;
+      writeTransform(node.data, { position: piece.position, rotation: [0, piece.yaw || 0, 0], scale: [k, k, k] });
+      parent.children.push(node);
+    }
 }
 
 // The stage's Map entry sizes the ground's pools as the stage loads
@@ -1263,7 +1298,7 @@ function collisionUse(col, gridX, gridZ) {
   }
   return { triangles: p.length / 9, lists };
 }
-function growCollisionPools(library, project, tree, col) {
+function growCollisionPools(library, project, tree, col, separate = []) {
   const original = library.files(project.base).get('map/map.col');
   let map = null;
   sceneBin.walk(tree, node => { if (!map && !node.children && node.type === 'Map') map = node; });
@@ -1276,6 +1311,11 @@ function growCollisionPools(library, project, tree, col) {
   const [gridX, gridZ, triangles, lists] = [0, 4, 8, 12].map(k => data.readInt32BE(at + k));
   if (!(gridX > 0 && gridZ > 0)) return;
   const before = collisionUse(original, gridX, gridZ), after = collisionUse(col, gridX, gridZ);
+  // models in files of their own set their ground into the same lists where each copy stands
+  for (const placed of stage.separateGround(separate)) {
+    const use = collisionUse(placed, gridX, gridZ);
+    after.triangles += use.triangles; after.lists += use.lists;
+  }
   const grow = (current, more) => more > 0 ? current + more + Math.ceil(more / 4) + 256 : current;
   data.writeInt32BE(grow(triangles, after.triangles - before.triangles), at + 8);
   data.writeInt32BE(grow(lists, after.lists - before.lists), at + 12);
@@ -1329,8 +1369,12 @@ function buildModel(library, project) { return stage.buildMap(library, project);
 // The whole stage archive with the project in it, Yaz0-compressed as the game stores it.
 function buildArchive(library, project) {
   const tree = archive.readTree(library.read(archiveFile(project.base)));
-  const { tree: scene, needs } = buildScene(library, project);
+  const { tree: scene, needs, separate } = buildScene(library, project);
   archive.treePut(tree, 'map/scene.bin', sceneBin.serialize(scene));
+  for (const { slot, bmd, col } of separate) {
+    archive.treePut(tree, `map/map/${slot.name}.bmd`, bmd);
+    if (col) archive.treePut(tree, `map/map/${slot.name}.col`, col);
+  }
   if (Object.keys(project.paint).length || stage.hasStageEdits(project)) archive.treePut(tree, 'map/map.col', buildCollision(library, project));
   const map = buildModel(library, project);
   if (map) archive.treePut(tree, originalPath(tree, 'map/map/map.bmd'), map);
@@ -1353,6 +1397,31 @@ function buildArchive(library, project) {
   }
   applyRetextures(tree, project.retextures);
   return { data: archive.yaz0Encode(archive.writeTree(tree)), copied };
+}
+
+// How much of the game's limits the level uses: the stage model's vertex arrays and its ground hold
+// at most 65,536 corners each (16-bit indexes); models in files of their own have their own.
+const LIMIT = 0x10000;
+function levelBudget(library, project) {
+  const pick = usage => ({ positions: usage[9] || 0, normals: usage[10] || 0, colors: usage[11] || 0, uvs: usage[13] || 0 });
+  const out = { limit: LIMIT, model: null, ground: 0, separate: [], waiting: [], slots: 0, error: null };
+  try {
+    const stats = {};
+    if (!stage.buildMap(library, project, { stats })) {
+      const data = library.files(project.base).get('map/map/map.bmd');
+      if (data) Object.assign(stats, new (require('./bmd-edit').BmdEdit)(data).usage());
+    }
+    out.model = pick(stats);
+  } catch (error) { out.error = error.message; }
+  try { out.ground = buildCollision(library, project).readUInt32BE(0); } catch (error) { out.error ||= error.message; }
+  try {
+    const separate = stage.hasStageEdits(project) ? stage.buildSeparate(library, project, SURFACES) : [];
+    out.separate = separate.map(({ model, stats, groundCorners }) => ({ id: model.id, label: model.label, ...pick(stats), ground: groundCorners }));
+    out.slots = stage.freeSlots(library, project.base).length;
+    const placed = new Set(separate.map(s => s.model.id));
+    out.waiting = (project.models || []).filter(m => m.separate && !placed.has(m.id) && (project.pieces || []).some(p => p.kind === 'model' && p.ref === m.id)).map(m => m.label);
+  } catch (error) { out.error ||= error.message; }
+  return out;
 }
 
 // --- Playing a level in the game ---------------------------------------------------
@@ -1456,5 +1525,5 @@ function originalPath(tree, file) {
 module.exports = {
   Library, WORLDS, CATEGORIES, SURFACES, GROUND_TYPES, CAMERA_TYPES, CATALOG_VERSION, PROJECT_FORMAT, FLOOR_NORMAL, worldOf, sceneLabel, buildCatalog, loadLevel, cleanProject,
   buildScene, buildCollision, buildModel, buildArchive, stageTable, stageStart, playTexts, setMessages, readTransform, writeTransform, describe, categoryOf, labelOf, humanize, fitManagers,
-  paintNpc, parseNpcLook, NPC_TYPES, retexturable, applyRetextures, growCollisionPools,
+  paintNpc, parseNpcLook, NPC_TYPES, retexturable, applyRetextures, growCollisionPools, levelBudget,
 };

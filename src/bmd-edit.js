@@ -169,6 +169,25 @@ class BmdEdit {
     return index;
   }
   hasArray(attr) { return this.arrays.has(attr); }
+  // Each vertex array's entries now (of the 65,536 its 16-bit indexes reach), by attribute.
+  usage() {
+    const out = {};
+    for (const [attr, array] of this.arrays) out[attr] = array.count + array.added.length;
+    return out;
+  }
+  // Empties every vertex array, for a model of only what's added next (its shapes must
+  // all be emptied first); `float` attributes change to floats, past 16-bit fixed point's reach.
+  clearVertices(float = []) {
+    for (const [attr, array] of this.arrays) {
+      if (float.includes(attr) && array.format.type !== 4) {
+        array.format = { ...array.format, type: 4, frac: 0 };
+        array.size = elementSize(array.format);
+        const f = this.formats.find(x => x.attr === attr);
+        if (f) Object.assign(f, { type: 4, frac: 0, changed: true });
+      }
+      Object.assign(array, { bytes: Buffer.alloc(0), count: 0, added: [], known: new Map() });
+    }
+  }
 
   readDraw(drw) {
     this.drw = drw;
@@ -422,6 +441,7 @@ class BmdEdit {
     const head = Buffer.from(this.vtx.subarray(0, 0x40));
     const formatAt = this.vtx.readUInt32BE(8);
     const formats = Buffer.from(this.vtx.subarray(formatAt, formatAt + (this.formats.length + 1) * 16));
+    this.formats.forEach((f, i) => { if (f.changed) { formats.writeUInt32BE(f.type, i * 16 + 8); formats[i * 16 + 12] = f.frac; } });
     const parts = [pad(Buffer.concat([head.subarray(0, formatAt), formats]), 32)];
     let at = parts[0].length;
     for (let i = 0; i < 13; i++) head.writeUInt32BE(0, 0x0c + i * 4);

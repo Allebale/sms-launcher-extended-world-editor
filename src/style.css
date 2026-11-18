@@ -1208,6 +1208,16 @@ small.renderer-warning { color: #a8481a; }
 .world-build-actions { display: grid; gap: 6px; margin: 10px 0 8px; }
 #world-texture-add, #world-model-add { width: 100%; padding: 7px 9px; font-size: 11px; }
 .world-model-fields { display: grid; gap: 7px; margin-top: 8px; }
+.world-budget { margin-top: 12px; }
+.world-budget h3 { margin: 0 0 4px; font-size: 12px; }
+.world-budget-rows { display: grid; gap: 6px; margin-top: 6px; }
+.world-budget-row { display: grid; gap: 3px; font-size: 11px; color: #4b666c; }
+.world-budget-row > div:first-child { display: flex; justify-content: space-between; gap: 8px; }
+.world-budget-bar { height: 6px; border-radius: 3px; background: rgba(23, 129, 138, 0.15); overflow: hidden; }
+.world-budget-bar i { display: block; height: 100%; background: #17818a; }
+.world-budget-row.warn .world-budget-bar i { background: #d69a19; }
+.world-budget-row.over .world-budget-bar i { background: #d6453a; }
+.dark .world-budget-row { color: #b8cdd2; }
 .world-retexture { margin-top: 10px; }
 .world-retexture h3 { margin: 0 0 4px; color: #687f82; font-size: 10px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
 .world-retexture-list { display: grid; gap: 5px; max-height: 260px; overflow: auto; }

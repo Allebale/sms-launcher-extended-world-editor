@@ -98,7 +98,7 @@ async function openLevel(scene, saved = null) {
     modelData.clear();
     project = saved ? normalizeProject(saved, scene) : newProject(scene);
     undoStack = []; redoStack = []; dirty = false; selected = null;
-    $('world-level').value = scene;
+    $('world-level').value = project.plain ? PLAIN : scene;
     $('world-name').value = project.name;
     await syncTextures();
     await syncModels();
@@ -107,6 +107,7 @@ async function openLevel(scene, saved = null) {
     renderOutline();
     renderInspector();
     syncButtons();
+    scheduleBudget();
     setStatus('');
     return true;
   } catch (error) {
@@ -116,20 +117,36 @@ async function openLevel(scene, saved = null) {
 }
 
 function newProject(scene) {
-  return { format: 'sms-world', version: 1, name: `My ${sceneLabel(scene)}`, base: scene, disc: levels.disc.gameId, edits: {}, added: [], paint: {}, pieces: [], texturePaint: {}, blank: false, textures: [], models: [], retextures: {} };
+  return { format: 'sms-world', version: 1, name: `My ${sceneLabel(scene)}`, base: scene, disc: levels.disc.gameId, edits: {}, added: [], paint: {}, pieces: [], texturePaint: {}, blank: false, plain: false, textures: [], models: [], retextures: {} };
+}
+
+// A plain level: a stage emptied of everything but Mario's start, its sea too (its sky stays),
+// with a floor below that ends a fall. Built on Delfino Plaza, or the first stage there is.
+const PLAIN = '__plain__';
+const BIG_MODEL = 20000;  // triangles: a model this big starts in a file of its own
+const plainBase = () => levels.scenes.dolpic0 ? 'dolpic0' : Object.keys(levels.scenes)[0];
+async function openPlainLevel() {
+  if (!await openLevel(plainBase())) return;
+  project.name = 'My plain level';
+  project.blank = project.plain = true;
+  for (const object of level.objects) if (object.transform && object.type !== 'Mario') project.edits[object.id] = { removed: true };
+  $('world-name').value = project.name;
+  $('world-level').value = PLAIN;
+  dirty = false;
+  syncScene(); renderOutline(); renderInspector(); syncButtons(); scheduleBudget();
 }
 
 function normalizeProject(saved, scene) {
   return {
     ...newProject(scene), ...saved, base: scene, edits: { ...saved.edits }, added: [...(saved.added || [])], paint: { ...saved.paint },
-    pieces: (saved.pieces || []).map(piece => ({ ...piece })), texturePaint: { ...saved.texturePaint }, blank: Boolean(saved.blank),
+    pieces: (saved.pieces || []).map(piece => ({ ...piece })), texturePaint: { ...saved.texturePaint }, blank: Boolean(saved.blank || saved.plain), plain: Boolean(saved.plain),
     textures: (saved.textures || []).flatMap(({ png, ...texture }) => {
       if (png) texturePngs.set(texture.id, png);
       return texturePngs.has(texture.id) ? [texture] : [];
     }),
     models: (saved.models || []).flatMap(model => {
       if (model.parts) modelData.set(model.id, model);
-      return modelData.has(model.id) ? [{ id: model.id, label: model.label, triangles: model.triangles, size: model.size }] : [];
+      return modelData.has(model.id) ? [{ id: model.id, label: model.label, triangles: model.triangles, size: model.size, ...(model.separate ? { separate: true } : {}) }] : [];
     }),
     retextures: Object.fromEntries(Object.entries(saved.retextures || {}).flatMap(([key, texture]) => {
       if (texture?.png) { const id = `loaded-${pictureCounter++}`; texturePngs.set(id, texture.png); return [[key, { id }]]; }
@@ -141,7 +158,7 @@ function normalizeProject(saved, scene) {
 // The level as it's saved, exported and played: its textures with their pictures.
 const fullProject = () => ({
   ...project, textures: (project.textures || []).filter(t => texturePngs.has(t.id)).map(t => ({ ...t, png: texturePngs.get(t.id) })),
-  models: (project.models || []).filter(m => modelData.has(m.id)).map(m => ({ ...modelData.get(m.id), label: m.label })),
+  models: (project.models || []).filter(m => modelData.has(m.id)).map(m => ({ ...modelData.get(m.id), label: m.label, separate: Boolean(m.separate) })),
   retextures: Object.fromEntries(Object.entries(project.retextures || {}).filter(([, t]) => texturePngs.has(t.id)).map(([key, t]) => [key, { png: texturePngs.get(t.id) }])),
 });
 
@@ -270,6 +287,58 @@ function change(label, apply) {
   renderOutline();
   renderInspector();
   syncButtons();
+  scheduleBudget();
+}
+
+// --- Budget -----------------------------------------------------------------------------
+
+// How much of the game's corner limits the level uses, worked out by the launcher building the level
+// as it would export it, a moment after the last change.
+let budgetTimer = null, budgetRun = 0;
+function scheduleBudget() {
+  clearTimeout(budgetTimer);
+  budgetTimer = setTimeout(refreshBudget, 1200);
+}
+async function refreshBudget() {
+  if (!project) return;
+  const run = ++budgetRun;
+  let budget;
+  try { budget = await window.sms.worldBudget(fullProject()); } catch (error) { budget = { error: error.message || String(error) }; }
+  if (run === budgetRun) renderBudget(budget);
+}
+function renderBudget(budget) {
+  const rows = $('world-budget-rows');
+  rows.replaceChildren();
+  const limit = budget.limit || 65536;
+  const row = (label, used, detail) => {
+    const share = used / limit, item = document.createElement('div');
+    item.className = `world-budget-row${share > 1 ? ' over' : share > 0.85 ? ' warn' : ''}`;
+    const head = document.createElement('div'), name = document.createElement('span'), value = document.createElement('span');
+    name.textContent = label;
+    value.textContent = `${used.toLocaleString()} of ${limit.toLocaleString()} (${Math.round(share * 100)}%)`;
+    head.append(name, value);
+    const bar = document.createElement('div'), fill = document.createElement('i');
+    bar.className = 'world-budget-bar';
+    fill.style.width = `${Math.min(100, share * 100)}%`;
+    bar.append(fill);
+    item.append(head, bar);
+    if (detail) item.title = detail;
+    rows.append(item);
+  };
+  const corners = m => Math.max(m.positions, m.normals, m.colors, m.uvs);
+  const detail = m => `Positions ${m.positions.toLocaleString()} · normals ${m.normals.toLocaleString()} · colours ${m.colors.toLocaleString()} · texture coordinates ${m.uvs.toLocaleString()}`;
+  if (budget.model) row('Stage model corners', corners(budget.model), detail(budget.model));
+  if (budget.ground !== undefined) row('Ground corners', budget.ground || 0);
+  for (const own of budget.separate || []) {
+    row(`${own.label} (own file)`, corners(own), detail(own));
+    if (own.ground) row(`${own.label} ground (own file)`, own.ground);
+  }
+  const notes = [];
+  if (budget.slots !== undefined) notes.push(`${(budget.separate || []).length} of ${budget.slots} own model files used on this stage.`);
+  if (budget.waiting?.length) notes.push(`No own file left for ${budget.waiting.join(', ')}: in the stage model instead.`);
+  if (budget.error) notes.push(budget.error);
+  $('world-budget-note').textContent = notes.join(' ');
+  $('world-budget-note').hidden = !notes.length;
 }
 
 function restore(from, to) {
@@ -294,6 +363,7 @@ function restore(from, to) {
   renderOutline();
   renderInspector();
   syncButtons();
+  scheduleBudget();
 }
 
 function setTransform(id, transform) {
@@ -326,6 +396,10 @@ const uid = () => `new-${Date.now().toString(36)}-${(uidCounter++).toString(36)}
 function renderLevelPicker() {
   const select = $('world-level');
   select.replaceChildren();
+  const fresh = document.createElement('optgroup');
+  fresh.label = 'Start fresh';
+  fresh.append(new Option('Plain level (only Mario\'s start)', PLAIN));
+  select.append(fresh);
   for (const world of levels.worlds) {
     const group = document.createElement('optgroup');
     group.label = world.name;
@@ -336,8 +410,9 @@ function renderLevelPicker() {
 
 $('world-level').addEventListener('change', async event => {
   const scene = event.target.value;
-  if (dirty && !confirm('Load this stage? Changes you haven\'t saved will be lost.')) { event.target.value = project.base; return; }
-  await openLevel(scene);
+  if (dirty && !confirm('Load this stage? Changes you haven\'t saved will be lost.')) { event.target.value = project.plain ? PLAIN : project.base; return; }
+  if (scene === PLAIN) await openPlainLevel();
+  else await openLevel(scene);
 });
 $('world-name').addEventListener('change', event => { project.name = event.target.value.trim() || project.name; event.target.value = project.name; dirty = true; syncButtons(); });
 
@@ -702,7 +777,8 @@ $('world-model-add').addEventListener('click', async () => {
   if (!model) { $('world-flash').hidden = true; return; }
   if (!project.models.some(m => m.id === model.id)) {
     modelData.set(model.id, model);
-    change('Add a model', () => { project.models.push({ id: model.id, label: model.label, triangles: model.triangles, size: model.size }); });
+    // big models start in a file of their own, past the stage model's corner limit
+    change('Add a model', () => { project.models.push({ id: model.id, label: model.label, triangles: model.triangles, size: model.size, ...(model.triangles > BIG_MODEL ? { separate: true } : {}) }); });
     await syncModels();
   }
   const item = catalog.items.find(i => i.userModel === model.id);
@@ -943,6 +1019,10 @@ function renderInspector() {
     if (!ground.options.length) for (const s of surfaces) ground.append(new Option(s.label, s.id));
     ground.value = object.piece.ground || 'stone';
     ground.disabled = object.piece.solid === false;
+    const model = project.models.find(m => m.id === object.piece.ref);
+    $('world-model-separate').checked = Boolean(model?.separate);
+    $('world-model-separate-note').textContent = model?.separate ? 'Every copy of this model is in its own file, solid and with footsteps as the first copy has them.' : '';
+    $('world-model-separate-note').hidden = !model?.separate;
   }
   $('world-rot-x').disabled = $('world-rot-z').disabled = Boolean(object.piece);
   $('world-piece-fields').hidden = !built;
@@ -1009,6 +1089,10 @@ const selectedPiece = () => { const object = selected && objectById(selected); r
 const selectedModel = () => { const object = selected && objectById(selected); return object?.piece?.kind === 'model' ? object.piece : null; };
 $('world-model-solid').addEventListener('change', event => { const piece = selectedModel(); if (piece) change('Make solid', () => { piece.solid = event.target.checked; }); });
 $('world-model-ground').addEventListener('change', event => { const piece = selectedModel(); if (piece) change('Change footsteps', () => { piece.ground = event.target.value; }); });
+$('world-model-separate').addEventListener('change', event => {
+  const piece = selectedModel(), model = piece && project.models.find(m => m.id === piece.ref);
+  if (model) change(event.target.checked ? 'Give a model its own file' : 'Put a model in the stage model', () => { model.separate = event.target.checked; });
+});
 $('world-model-remove').addEventListener('click', () => {
   const piece = selectedModel();
   if (!piece) return;
@@ -1287,7 +1371,7 @@ function createView(canvas) {
 
   // --- Stage and collision ---
   let collision = null, overlay = null, overlayOn = false, levelToken = 0;
-  let baseGround = null, mapStage = null, seaStage = null, stageKey = '', paintedVersion = -1, blank = false;
+  let baseGround = null, mapStage = null, seaStage = null, stageKey = '', paintedVersion = -1, blank = false, plainView = false;
   const painted = new THREE.Group();
   async function setLevel(data) {
     const token = ++levelToken;
@@ -1449,15 +1533,17 @@ function createView(canvas) {
   function setStage(project, version) {
     if (!baseGround) return;
     blank = Boolean(project.blank);
+    plainView = Boolean(project.plain);
     if (mapStage) mapStage.group.visible = !blank;
     painted.visible = !blank;
     // An emptied stage keeps the open sea, not its canals, falls and shore foam.
     if (seaStage) {
       seaStage.open ??= openSea(seaStage.built.meshes);
-      seaStage.group.children.forEach((mesh, i) => { mesh.visible = !blank || i === seaStage.open; });
+      // a plain level has none at all
+      seaStage.group.children.forEach((mesh, i) => { mesh.visible = !project.plain && (!blank || i === seaStage.open); });
     }
     if (overlay) overlay.mesh.visible = overlayOn && !blank;
-    const key = JSON.stringify([blank, project.pieces]);
+    const key = JSON.stringify([blank, plainView, project.pieces]);
     if (key !== stageKey) { stageKey = key; rebuildGround(project.pieces); }
     if (version !== paintedVersion) { paintedVersion = version; showTexturePaint(project.texturePaint); }
   }
@@ -1500,7 +1586,7 @@ function createView(canvas) {
     // An emptied stage keeps its sea (surface, floor and the plane that ends a fall), not to paint.
     if (blank) {
       for (let t = 0; t < baseGround.codes.length; t++) {
-        if (![0x0102, 0x0700, 0x0800].includes(Math.floor(baseGround.codes[t] / 256) & 0x1fff)) continue;
+        if (!(plainView ? [0x0800] : [0x0102, 0x0700, 0x0800]).includes(Math.floor(baseGround.codes[t] / 256) & 0x1fff)) continue;
         for (let k = 0; k < 9; k++) extra.push(baseGround.position[t * 9 + k]);
         codes.push(baseGround.codes[t]);
       }

@@ -242,6 +242,12 @@
             <div id="world-inspector-empty">
               <h2>Stage</h2>
               <p id="world-level-info" class="helper"></p>
+              <div id="world-budget" class="world-budget" aria-live="polite">
+                <h3>Budget</h3>
+                <p class="helper">The game holds up to 65,536 corners in a stage model and in its ground. Big models can go in files of their own, which have their own.</p>
+                <div id="world-budget-rows" class="world-budget-rows"></div>
+                <p id="world-budget-note" class="helper world-note" hidden></p>
+              </div>
               <label class="switch world-switch"><span><strong>Show ground types</strong><small>Colours the ground by type. Always on while painting.</small></span><input id="world-show-ground" type="checkbox"><i></i></label>
               <button id="world-revert" class="text-button">Undo every change to this stage</button>
             </div>
@@ -259,6 +265,8 @@
               <div id="world-model-fields" class="world-model-fields" hidden>
                 <label class="world-check"><input id="world-model-solid" type="checkbox"><span>Solid: Mario stands on it and bumps into it</span></label>
                 <label class="world-field"><span>Footsteps</span><select id="world-model-ground"></select></label>
+                <label class="world-check" title="Up to 5 models a level, each with its own 65,536 corners. Every copy of this model goes in that file."><input id="world-model-separate" type="checkbox"><span>Own model file (for big models)</span></label>
+                <p id="world-model-separate-note" class="helper" hidden></p>
                 <button id="world-model-remove" class="subtle danger">Remove this model from the level</button>
               </div>
               <div id="world-retexture" class="world-retexture" hidden>

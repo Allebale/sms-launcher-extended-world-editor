@@ -188,7 +188,8 @@ function cleanUserModels(input) {
     if (!(triangles > 0) || triangles > MAX_TRIANGLES) continue;
     seen.add(model.id);
     const size = Array.isArray(model.size) && model.size.length === 3 && model.size.every(v => Number.isFinite(v)) ? model.size.map(v => Math.round(v)) : [0, 0, 0];
-    out.push({ id: model.id, label: String(model.label || 'My model').slice(0, 40), triangles: Math.round(triangles), size, parts });
+    // `separate`: exported as a model file of its own (world-stage.js, SEPARATE_SLOTS), not into the stage's
+    out.push({ id: model.id, label: String(model.label || 'My model').slice(0, 40), triangles: Math.round(triangles), size, parts, ...(model.separate ? { separate: true } : {}) });
     if (out.length >= MAX_MODELS) break;
   }
   return out;

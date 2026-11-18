@@ -12,9 +12,10 @@
 const j3d = require('./j3d');
 const levelModel = require('./level-model');
 const collisionFile = require('./collision');
+const sceneBin = require('./scene-bin');
 const build = require('./world-build');
 const { BmdEdit, POS, NRM, CLR0, TEX0 } = require('./bmd-edit');
-const { cmpr } = require('./j3d-write');
+const { cmpr, tex1, assemble, sectionOf } = require('./j3d-write');
 const { readPng } = require('./texture-image');
 const userModels = require('./world-model');
 
@@ -608,13 +609,69 @@ function cleanStage(input, scenes) {
     const textures = { top: ID.test(piece.textures?.top) ? piece.textures.top : 'delfino-tiles', side: ID.test(piece.textures?.side) ? piece.textures.side : 'delfino-white-wall' };
     return [{ uid, kind: piece.kind, label, position: [...piece.position], yaw, size: build.cleanSize(piece.kind, piece.size), textures, ground: ID.test(piece.ground) ? piece.ground : null }];
   });
-  return { texturePaint, pieces, blank: Boolean(input?.blank), textures: cleanUserTextures(input?.textures), models, retextures: cleanRetextures(input?.retextures) };
+  return { texturePaint, pieces, blank: Boolean(input?.blank || input?.plain), plain: Boolean(input?.plain), textures: cleanUserTextures(input?.textures), models, retextures: cleanRetextures(input?.retextures) };
 }
 const hasStageEdits = project => project.blank || Object.keys(project.texturePaint || {}).length > 0 || (project.pieces || []).length > 0;
 
-// The stage's model with painted ground, built pieces and copied pieces in it.
-function buildMap(library, project) {
-  if (!hasStageEdits(project)) return null;
+// --- Models in files of their own ------------------------------------------------------
+
+// A stage model holds at most 65,536 of each kind of corner (16-bit indexes), and so does
+// its ground. Big models go into model files of their own instead, each with its own
+// limits, shown by the game's TMapStaticObj (Map/MapStaticObject.cpp): it loads
+// /scene/map/map/<name>.bmd, and <name>.col as ground set where it stands, for these
+// names of its table, ones no stage of the game uses beyond its own and with nothing
+// special done for them. One model a name, placed as many times as wanted.
+const SEPARATE_SLOTS = [
+  { name: 'mareSeaPollutionS0', ground: true },
+  { name: 'mareSeaPollutionS12', ground: true },
+  { name: 'MonteRiver', ground: true },
+  { name: 'BiancoRiver', ground: false },
+  { name: 'Mare5ExGate', ground: false },
+];
+const SEPARATE_MAX = SEPARATE_SLOTS.length;
+// The names the stage itself uses (its scene's MapStaticObj objects; Noki Bay's episode 6 makes its
+// Mare5ExGate itself), left to it.
+function freeSlots(library, base) {
+  const used = new Set();
+  sceneBin.walk(library.sceneTree(base), node => {
+    if (node.type !== 'MapStaticObj' || node.children) return;
+    const names = staticObjName(node.data);
+    if (names) used.add(names);
+  });
+  if (/^mare/.test(base)) used.add('Mare5ExGate');
+  return SEPARATE_SLOTS.filter(slot => !used.has(slot.name));
+}
+// A MapStaticObj's table name: its last string (after TActor's name and light map).
+function staticObjName(data) {
+  let at = 36;
+  const skip = () => { if (at + 2 > data.length) return null; const n = data.readUInt16BE(at), text = data.toString('latin1', at + 2, at + 2 + n); at += 2 + n; return text; };
+  if (skip() === null || at + 4 > data.length) return null;
+  const lights = data.readInt32BE(at); at += 4;
+  for (let i = 0; i < lights && i < 64; i++) { at += 4; if (skip() === null) return null; }
+  return skip();
+}
+// The level's models in files of their own: [{ model, slot, pieces }], the solid ones on the
+// names with ground first; models past the free names go into the stage model as usual.
+function separateModels(library, project) {
+  const wanted = (project.models || []).filter(m => m.separate && (project.pieces || []).some(p => p.kind === 'model' && p.ref === m.id));
+  if (!wanted.length) return [];
+  const free = freeSlots(library, project.base), out = [];
+  const solidOf = m => (project.pieces || []).some(p => p.kind === 'model' && p.ref === m.id && p.solid);
+  for (const model of [...wanted].sort((a, b) => solidOf(b) - solidOf(a))) {
+    const at = free.findIndex(slot => slot.ground === solidOf(model)) >= 0 ? free.findIndex(slot => slot.ground === solidOf(model)) : 0;
+    if (!free.length) break;
+    const [slot] = free.splice(at, 1);
+    out.push({ model, slot, pieces: project.pieces.filter(p => p.kind === 'model' && p.ref === model.id) });
+  }
+  return out;
+}
+const separateIds = (library, project) => new Set(separateModels(library, project).map(s => s.model.id));
+
+// The stage's model with painted ground, built pieces and copied pieces in it. `only`: a model in a
+// file of its own instead (separateModels): the stage's materials, its shapes emptied, only that model,
+// unplaced. `stats`: filled with the vertex arrays' use.
+function buildMap(library, project, { only = null, stats = null } = {}) {
+  if (!hasStageEdits(project) && !only) return null;
   const base = project.base, data = library.files(base).get(MAP);
   if (!data) throw new Error('This stage has no model to build into.');
   const edit = new BmdEdit(data);
@@ -662,7 +719,7 @@ function buildMap(library, project) {
   };
 
   // 1. The stage's own faces: all gone on an empty stage, else repainted ones moved to new shapes.
-  if (project.blank) for (let s = 0; s < edit.shapes.length; s++) edit.removeTriangles(s, edit.shapeTriangles(s).map((_, i) => i));
+  if (project.blank || only) for (let s = 0; s < edit.shapes.length; s++) edit.removeTriangles(s, edit.shapeTriangles(s).map((_, i) => i));
   else {
     const byShape = new Map();  // shape -> Map(paletteId -> [{ local, face, mesh }])
     for (const [key, paletteId] of Object.entries(project.texturePaint || {})) {
@@ -723,7 +780,16 @@ function buildMap(library, project) {
     if (!triangles.length) return;
     edit.addShape({ attrs: newAttrs(), packets: [{ matrices: hostMatrices, triangles }], joint: hostShape.joint, material: look.material, bounds: bounds(points) });
   };
+  if (only) {
+    // its corners as floats: a model's own size can be past 16-bit fixed point's
+    edit.clearVertices([POS, TEX0]);
+    addUserModel(edit, { kind: 'model', ref: only, position: [0, 0, 0], yaw: 0, scale: 1 }, project, { plain, model, addFaces, textures });
+    if (stats) Object.assign(stats, edit.usage());
+    return smallStageTextures(edit.write(), edit);
+  }
+  const apart = separateIds(library, project);
   for (const piece of project.pieces || []) {
+    if (piece.kind === 'model' && apart.has(piece.ref)) continue;  // in a file of its own
     if (piece.kind === 'prefab') { addPrefab(library, edit, piece, { data, materialFor: null, plain, model, addFaces, textures, toHost, hostMatrices, hostShape, bounds }); continue; }
     if (piece.kind === 'model') { addUserModel(edit, piece, project, { plain, model, addFaces, textures }); continue; }
     const groups = new Map();
@@ -736,7 +802,53 @@ function buildMap(library, project) {
       if (look) addFaces(faces, look, face => build.shade(face.n, look.base));
     }
   }
+  if (stats) Object.assign(stats, edit.usage());
   return edit.write();
+}
+
+// A model file of the stage's materials with only added shapes: the stage's own textures, which
+// nothing draws in it any more, made 8 × 8 so the game doesn't load them a second time.
+function smallStageTextures(data, edit) {
+  const tiny = { format: 14, width: 8, height: 8, rgba: new Uint8Array(8 * 8 * 4).fill(128) };
+  const replacements = {};
+  for (let i = 0; i < edit.textureCount; i++) replacements[edit.textureNames[i]] = tiny;
+  const added = new Set(edit.addedTextures.map(t => t.name));
+  for (const name of added) delete replacements[name];
+  return assemble(data, { TEX1: tex1(sectionOf(data, 'TEX1'), replacements) });
+}
+
+// The level's models in files of their own: for each, its model file, its ground (unplaced; the game
+// sets it where each copy stands) and the scene objects that show it.
+function buildSeparate(library, project, SURFACES) {
+  const out = [];
+  const codeOf = id => { const s = SURFACES.find(x => x.id === id) || SURFACES[0]; return s.type * 256 + s.sound; };
+  for (const { model, slot, pieces } of separateModels(library, project)) {
+    const stats = {};
+    const bmd = buildMap(library, project, { only: model.id, stats });
+    let col = null;
+    const solid = pieces.find(p => p.solid);
+    if (slot.ground && solid) {
+      const add = [], stone = codeOf('stone'), piece = { position: [0, 0, 0], yaw: 0, scale: 1 };
+      for (const part of userModels.decodeModel(model).parts)
+        for (const face of userModelFaces(part, piece)) add.push({ p: face.p, code: build.isFloor(face.n) ? codeOf(solid.ground) : stone });
+      col = add.length ? collisionFile.compose(null, { add }) : null;
+    }
+    out.push({ model, slot, pieces, bmd, col, stats, groundCorners: col ? col.readUInt32BE(0) : 0 });
+  }
+  return out;
+}
+// Each copy's ground where it stands, as the game sets it (for the ground's pools).
+function separateGround(separate) {
+  const out = [];
+  for (const { model, col, pieces } of separate) {
+    if (!col) continue;
+    for (const piece of pieces) {
+      const add = [];
+      for (const part of userModels.decodeModel(model).parts) for (const face of userModelFaces(part, piece)) add.push({ p: face.p, code: 0 });
+      if (add.length) out.push(collisionFile.compose(null, { add }));
+    }
+  }
+  return out;
 }
 
 // A copied piece: same-stage pieces keep their own materials; pieces from
@@ -828,7 +940,8 @@ function buildSea(library, project) {
   if (!data) return null;
   const edit = new BmdEdit(data), baked = library.model(`${project.base}|${SEA}`);
   const open = openSea(baked);
-  const keep = new Set(baked.meshes[open]?.sources?.map(([shape]) => shape) || []);
+  // a plain level keeps none of it
+  const keep = new Set(project.plain ? [] : baked.meshes[open]?.sources?.map(([shape]) => shape) || []);
   for (let s = 0; s < edit.shapes.length; s++) if (!keep.has(s)) edit.removeTriangles(s, edit.shapeTriangles(s).map((_, i) => i));
   return edit.write();
 }
@@ -849,7 +962,7 @@ function buildGround(library, project, surfaces, defaults) {
   if (!col && !project.blank && !(project.pieces || []).length) throw new Error('This stage has no ground file.');
   const add = [];
   const codeOf = id => { const s = surfaces.find(x => x.id === id) || surfaces[0]; return s.type * 256 + s.sound; };
-  const stone = codeOf('stone');
+  const stone = codeOf('stone'), apart = separateIds(library, project);
   for (const piece of project.pieces || []) {
     if (piece.kind === 'prefab') {
       const parsed = parsePrefabRef(piece.ref);
@@ -867,7 +980,7 @@ function buildGround(library, project, surfaces, defaults) {
       continue;
     }
     if (piece.kind === 'model') {
-      const stored = piece.solid && (project.models || []).find(m => m.id === piece.ref);
+      const stored = piece.solid && !apart.has(piece.ref) && (project.models || []).find(m => m.id === piece.ref);
       if (!stored) continue;
       for (const part of userModels.decodeModel(stored).parts)
         for (const face of userModelFaces(part, piece)) add.push({ p: face.p, code: build.isFloor(face.n) ? codeOf(piece.ground) : stone });
@@ -878,14 +991,23 @@ function buildGround(library, project, surfaces, defaults) {
       || (project.textures || []).find(t => t.id === piece.textures.top)?.ground || 'stone';
     for (const face of build.faces(piece)) add.push({ p: face.p, code: build.isFloor(face.n) ? codeOf(groundId) : stone });
   }
+  if (project.plain) {
+    // A plain level: no sea, and a floor that ends a fall well below everything (its own, should the
+    // stage have none), as wide as the stage's ground can reach.
+    let low = -3000;
+    for (const { p } of add) for (const [, y] of p) low = Math.min(low, y - 2000);
+    const w = 65000, death = 0x0800 * 256;  // the death plane's type, as the stages have it
+    add.push({ p: [[-w, low, -w], [w, low, w], [w, low, -w]], code: death }, { p: [[-w, low, -w], [-w, low, w], [w, low, w]], code: death });
+  }
   if (!project.blank && !add.length) return Object.keys(project.paint || {}).length ? collisionFile.paint(col, project.paint, defaults) : null;
-  return collisionFile.compose(col || null, { changes: project.paint || {}, defaults, clear: project.blank, keep: keepsOnEmpty, add });
+  return collisionFile.compose(col || null, { changes: project.paint || {}, defaults, clear: project.blank, keep: project.plain ? keepsOnPlain : keepsOnEmpty, add });
 }
 
 // What an emptied stage keeps of its ground: the sea's surface and floor and
 // the plane below that ends a fall (camera and shadow bits aside).
 const EMPTY_KEEPS = new Set([0x0102, 0x0700, 0x0800]);
 const keepsOnEmpty = type => EMPTY_KEEPS.has(type & 0x1fff);
+const keepsOnPlain = type => (type & 0x1fff) === 0x0800;
 
 // The stage's plainest material: one texture, one stage, opaque, the most
 // ground covered. Textures from other stages are drawn with it.
@@ -935,4 +1057,5 @@ function invert(m) {
 module.exports = {
   PALETTE, PALETTE_GROUPS, PREFABS, palette, paletteModel, isUserTexture, cleanUserTextures, userBti, userEntry, setUserTextures, setUserModels, cleanRetextures, retextureImage, prefabs, prefabModel, prefabRef, parsePrefabRef, stageModel,
   cleanStage, hasStageEdits, buildMap, buildGround, buildSea, openSea, plainTemplate, EMPTY_KEEPS, texAffine, untexAffine, plainTexMatrices,
+  buildSeparate, separateGround, separateModels, freeSlots, SEPARATE_SLOTS, SEPARATE_MAX,
 };

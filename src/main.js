@@ -2691,6 +2691,8 @@ function registerHandlers() {
   // The level's own textures, for the editor to draw them (palette|user-… models) and list them.
   ipcMain.handle('world-textures', (_event, base, textures) => worldStage.setUserTextures(worldLib(), String(base || ''), textures));
   ipcMain.handle('world-export', (event, project, kind) => worldExport(event, project, kind));
+  // How much of the game's corner limits the level uses (the editor's budget meter).
+  ipcMain.handle('world-budget', (_event, project) => world.levelBudget(worldLib(), worldProject(project)));
   ipcMain.handle('mario-model', () => ({ model: marioFrom(port.validateRom(config.rom)), look: config.marioLook }));
   // The Characters page: the launcher's characters (character-roster.js), each made from the player's disc
   // the first time it is chosen, posed by its animations; the outfit worn is who the game starts as.
