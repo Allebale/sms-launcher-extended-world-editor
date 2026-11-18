@@ -543,3 +543,24 @@ test('on a real disc, a model in a file of its own exports its model, its ground
   assert.equal(budget.separate.length, 1);
   assert.ok(budget.model.positions > 1000);
 });
+
+test('OBJ models come in as a binary glTF: faces fanned, v counted from the top, materials and pictures from beside them', () => {
+  const { objToGlb, mapFile } = require('../src/obj-glb');
+  const models = require('../src/world-model');
+  const obj = ['mtllib box.mtl', 'v 0 0 0', 'v 1 0 0', 'v 1 0 1', 'v 0 0 1', 'vt 0 0', 'vt 1 0', 'vt 1 1', 'vt 0 1', 'vn 0 1 0',
+    'usemtl red', 'f 1/1/1 4/4/1 3/3/1 2/2/1', 'usemtl pic', 'f -4/-4 -1/-1 -2/-2'].join('\n');
+  const mtl = 'newmtl red\nKd 1 0 0\nnewmtl pic\nmap_Kd -s 1 1 1 tex/wall.png\n';
+  const asked = [];
+  const glb = objToGlb(obj, name => { asked.push(name); return name === 'box.mtl' ? Buffer.from(mtl) : name === 'tex/wall.png' ? Buffer.from('png') : null; });
+  assert.ok(asked.includes('tex/wall.png'));
+  const read = models.readGlb(glb, () => ({ width: 8, height: 8, rgba: new Uint8Array(256).fill(200) }));
+  assert.equal(read.triangles, 3);
+  assert.deepEqual(read.size, [100, 0, 100]);
+  const [red, pic] = read.parts;
+  assert.deepEqual(Array.from(red.texture.rgba.subarray(0, 4)), [255, 0, 0, 255]);
+  assert.equal(pic.texture.rgba[0], 200);
+  // vt 0 0 (the bottom left in OBJ) is v = 1 in glTF
+  assert.equal(pic.uv[1], 1);
+  assert.equal(mapFile(['-clamp', 'on', 'my', 'pic.png']), 'my pic.png');
+  assert.throws(() => objToGlb('v 0 0 0', () => null), /no faces/);
+});

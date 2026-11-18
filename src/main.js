@@ -1723,11 +1723,21 @@ async function worldTextureImport(event) {
 // parts with their textures as the game needs them.
 async function worldModelImport(event) {
   const chosen = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), { title: 'Add your own 3D model', properties: ['openFile'],
-    filters: [{ name: '3D models (binary glTF)', extensions: ['glb'] }] });
+    filters: [{ name: '3D models (binary glTF or OBJ)', extensions: ['glb', 'obj'] }] });
   if (chosen.canceled || !chosen.filePaths[0]) return null;
   const file = chosen.filePaths[0];
   if (fs.statSync(file).size > 128 << 20) throw new Error('That model is too large.');
-  const data = fs.readFileSync(file);
+  let data = fs.readFileSync(file);
+  // An OBJ, with its .mtl and pictures from beside it (or below it), as a .glb
+  if (/\.obj$/i.test(file)) {
+    const folder = path.dirname(file);
+    const near = name => {
+      const target = path.resolve(folder, String(name));
+      if (path.relative(folder, target).startsWith('..') || path.isAbsolute(path.relative(folder, target))) return null;
+      try { return fs.statSync(target).isFile() && fs.statSync(target).size <= 64 << 20 ? fs.readFileSync(target) : null; } catch (_) { return null; }
+    };
+    data = require('./obj-glb').objToGlb(data.toString('utf8'), near);
+  }
   const read = worldModels.readGlb(data, bytes => worldPicture(nativeImage.createFromBuffer(bytes)));
   const label = path.basename(file, path.extname(file)).replace(/[_-]+/g, ' ').replace(/[^\w ()'.,-]+/g, '').trim().slice(0, 40) || 'My model';
   const id = `model-${crypto.createHash('sha1').update(data).digest('hex').slice(0, 12)}`;
