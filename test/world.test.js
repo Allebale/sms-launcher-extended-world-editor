@@ -444,6 +444,18 @@ test('ground added to a stage grows the pools its Map entry gives the game for i
   assert.deepEqual([same.data.readInt32BE(12), same.data.readInt32BE(16)], [100, 300]);
 });
 
+test('ground past the edge of the stage\'s collision grid widens the grid', () => {
+  const collisionFile = require('../src/collision');
+  const small = collisionFile.compose(null, { add: [{ p: [[0, 0, 0], [100, 0, 0], [0, 0, 100]], code: 0 }] });
+  // 16 cells of 1024 reach 8192 from the middle: this floor runs to 15000 on x, and the far plane is left out.
+  const wide = collisionFile.compose(small, { add: [{ p: [[-100, 0, 0], [15000, 0, 0], [0, 0, 3000]], code: 0 },
+    { p: [[-65000, -9000, -65000], [65000, -9000, 65000], [65000, -9000, -65000]], code: 0x0800 * 256 }] });
+  const ints = values => Buffer.concat(values.map(v => { const b = Buffer.alloc(4); b.writeInt32BE(v); return b; }));
+  const map = { type: 'Map', nameBytes: Buffer.from('map'), data: ints([0, 16, 16, 100, 300, 10, 0]), children: null };
+  world.growCollisionPools({ files: () => new Map([['map/map.col', small]]) }, { base: 'home' }, { type: 'GroupObj', nameBytes: Buffer.from('root'), data: Buffer.alloc(0), children: [map] }, wide);
+  assert.deepEqual([map.data.readInt32BE(4), map.data.readInt32BE(8)], [30, 16]);
+});
+
 test('players\' models keep their own texture coordinates and unlit look on any stage material', () => {
   const stage = require('../src/world-stage'), models = require('../src/world-model');
   // A stage material whose texture matrix is scaled, turned about a centre and moved, as many are.

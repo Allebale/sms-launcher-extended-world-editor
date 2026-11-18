@@ -1313,10 +1313,23 @@ function growCollisionPools(library, project, tree, col, separate = []) {
   if (at + 20 > data.length) return;
   const [gridX, gridZ, triangles, lists] = [0, 4, 8, 12].map(k => data.readInt32BE(at + k));
   if (!(gridX > 0 && gridZ > 0)) return;
-  const before = collisionUse(original, gridX, gridZ), after = collisionUse(col, gridX, gridZ);
+  const placedGround = stage.separateGround(separate);
+  // Ground past the grid's edge has no collision in the game: the grid grows to take all of it in
+  // (the plane far below that ends a fall aside, which only needs to cover the grid).
+  const reach = [gridX, gridZ];
+  for (const file of [col, ...placedGround]) {
+    const { position: p } = collisionFile.parse(file);
+    for (let k = 0; k < p.length; k += 3)
+      for (const [axis, v] of [[0, p[k]], [1, p[k + 2]]])
+        if (Math.abs(v) < 60000) reach[axis] = Math.max(reach[axis], 2 * Math.ceil((Math.abs(v) + 200) / 1024));
+  }
+  const [wideX, wideZ] = reach;
+  if (wideX > gridX) data.writeInt32BE(wideX, at);
+  if (wideZ > gridZ) data.writeInt32BE(wideZ, at + 4);
+  const before = collisionUse(original, gridX, gridZ), after = collisionUse(col, wideX, wideZ);
   // models in files of their own set their ground into the same lists where each copy stands
-  for (const placed of stage.separateGround(separate)) {
-    const use = collisionUse(placed, gridX, gridZ);
+  for (const placed of placedGround) {
+    const use = collisionUse(placed, wideX, wideZ);
     after.triangles += use.triangles; after.lists += use.lists;
   }
   // with room to spare: what the stage's objects add later (wires, moving ground) shares these
