@@ -666,3 +666,10 @@ test('an emptied stage drops the events that sink buildings into its goop', () =
   const full = world.buildScene(library, { base: 'bianco0', edits: {}, added: [], paint: {}, pieces: [], blank: false }).tree;
   assert.equal(full.children[0].children.length, 2);
 });
+
+test('a level\'s own files keep only safe paths and stay out of the editor\'s own', () => {
+  const b64 = Buffer.from('x').toString('base64');
+  const p = world.cleanProject({ format: 'sms-world', base: 'bianco0', files: { 'hamukuri/head.bmd': b64, 'map/params/enemy/bossdangohamukuri.prm': b64,
+    'map/scene.bin': b64, '../evil': b64, 'Hamukuri/X.bmd': b64, 'hamukuri/bad': 'not base64!' } }, ['bianco0']);
+  assert.deepEqual(Object.keys(p.files), ['hamukuri/head.bmd', 'map/params/enemy/bossdangohamukuri.prm']);
+});

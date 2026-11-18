@@ -616,11 +616,24 @@ function cleanStage(input, scenes) {
     return [{ uid: String(wire.uid || '').slice(0, 80), a: [...wire.a], b: [...wire.b] }];
   });
   const sun = SUN_TIMES[input?.sun] ? input.sun : '';
+  // Files of the level's own for the stage's archive (a character's model, a parameter file): a
+  // folder and file name in lower case, not the files the editor makes itself
+  const files = {};
+  let total = 0;
+  for (const [file, data] of Object.entries(input?.files && typeof input.files === 'object' ? input.files : {}).slice(0, OWN_FILES_MAX)) {
+    if (!/^[a-z0-9_]+(\/[a-z0-9_.-]+)+$/.test(file) || file.includes('..') || EDITOR_FILES.has(file) || typeof data !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(data)) continue;
+    total += data.length * 3 / 4;
+    if (total > OWN_FILES_BYTES) break;
+    files[file] = data;
+  }
   // What the stage's characters say: every message of its message file, in turn (each line up to 3 rows)
   const messages = (Array.isArray(input?.messages) ? input.messages : []).slice(0, 64)
     .map(text => String(text ?? '').replace(/\r/g, '').replace(/[^\x20-\x7e\n]/g, '').slice(0, 300)).filter(text => text.trim());
-  return { texturePaint, pieces, blank: Boolean(input?.blank || input?.plain), plain: Boolean(input?.plain), textures: cleanUserTextures(input?.textures), models, retextures: cleanRetextures(input?.retextures), wires, sun, messages };
+  return { texturePaint, pieces, blank: Boolean(input?.blank || input?.plain), plain: Boolean(input?.plain), textures: cleanUserTextures(input?.textures), models, retextures: cleanRetextures(input?.retextures), wires, sun, messages, files };
 }
+// A level's own files for the stage's archive: up to 32, 16 MB in all; never the ones the editor writes.
+const OWN_FILES_MAX = 32, OWN_FILES_BYTES = 16 * 1024 * 1024;
+const EDITOR_FILES = new Set(['map/scene.bin', 'map/map.col', 'map/map/map.bmd', 'map/map/sea.bmd', 'map/tables.bin', 'map/message.bmg']);
 // The stage's MapWireManager makes room for 200 wires (bianco0 and the others alike).
 const MAX_WIRES = 200;
 // Where the sun stands, as the light's direction toward it: [toward +X, up, toward +Z] (any length).

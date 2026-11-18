@@ -926,7 +926,9 @@ function characterModel(context, type, managerName) {
   return null;
 }
 
-const COMMON_FOLDERS = { NPCMonteM: ['montemcommon'], NPCMonteW: ['montewcommon'], NPCMareM: ['marecommon', 'marem'], NPCMareW: ['marecommon', 'marew'] };
+const COMMON_FOLDERS = { NPCMonteM: ['montemcommon'], NPCMonteW: ['montewcommon'], NPCMareM: ['marecommon', 'marem'], NPCMareW: ['marecommon', 'marew'],
+  // Strollin' Stus and the Dango read their animations from /scene/hamukurianm (THamuKuriManager::createAnmData)
+  HamuKuri: ['hamukurianm'], BossDangoHamuKuri: ['hamukurianm'] };
 
 // Files a placed object needs from the stage it came from: its model and
 // everything named like it (animations, collision), or its whole folder.
@@ -1215,6 +1217,10 @@ function resolvePremade(catalog, input) {
   return { ...input, added, ...(missing.size ? { unresolved: [...missing] } : {}) };
 }
 
+// Managers an object asks the game for by name, not named in its own data: the Dango (Pinna Park's
+// stack of Strollin' Stus) makes the balls on top of it with the Dango balls' manager
+// (TBossDangoHamuKuri::generateBody), and without it stands alone.
+const COMPANION_MANAGERS = { BossDangoHamuKuri: ['だんごハムクリマネージャー'] };
 const GOOP_EVENTS = new Set(['MapEventSinkInPollution', 'MapEventSinkInPollutionReset', 'MapEventSinkBianco']);
 function removeWhere(tree, test) {
   const go = node => { if (node.children) node.children = node.children.filter(child => { if (test(child)) return false; go(child); return true; }); };
@@ -1258,8 +1264,8 @@ function buildScene(library, project) {
     const sourceParent = sceneBin.find(sourceTree, parentId);
     const parent = findGroup(tree, sourceParent) || findGroup(tree, null);
     parent.children.push(node);
-    // Its manager, when the stage doesn't have one by that name.
-    for (const name of describe(node).names) addManager(tree, sourceTree, name);
+    // Its manager, when the stage doesn't have one by that name, and any the game finds by name for it.
+    for (const name of [...describe(node).names, ...(COMPANION_MANAGERS[node.type] || [])]) addManager(tree, sourceTree, name);
     const context = library.context(added.source.scene), files = context.files;
     const described = describe(source);
     const model = modelPath(context, source, described);
@@ -1526,6 +1532,8 @@ function buildArchive(library, project) {
   applyRetextures(tree, project.retextures);
   applyWires(tree, project.wires);
   applyMessages(tree, project.messages);
+  // The level's own files (a character's model, a parameter file), over anything copied above
+  for (const [file, data] of Object.entries(project.files || {})) archive.treePut(tree, originalPath(tree, file), Buffer.from(data, 'base64'));
   return { data: archive.yaz0Encode(archive.writeTree(tree)), copied };
 }
 
