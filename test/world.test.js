@@ -628,3 +628,15 @@ test('a premade level\'s things named by kind are found in the catalog', () => {
   assert.deepEqual(out.added[1].transform.position, [1, 2, 3]);
   assert.deepEqual(out.unresolved, ['Nothing']);
 });
+
+test('an emptied stage drops the events that sink buildings into its goop', () => {
+  const fs = require('node:fs');
+  const leaf = type => ({ type, nameBytes: Buffer.from(type), data: Buffer.alloc(4), children: null });
+  const group = { type: 'IdxGroup', nameBytes: Buffer.from('g'), data: Buffer.alloc(4), children: [leaf('MapEventSinkBianco'), leaf('Sky')] };
+  const root = { type: 'GroupObj', nameBytes: Buffer.from('r'), data: Buffer.alloc(0), children: [group] };
+  const library = { sceneTree: () => root, files: () => new Map(), scenes: () => ['bianco0'] };
+  const kept = world.buildScene(library, { base: 'bianco0', edits: {}, added: [], paint: {}, pieces: [], blank: true }).tree;
+  assert.deepEqual(kept.children[0].children.map(n => n.type), ['Sky']);
+  const full = world.buildScene(library, { base: 'bianco0', edits: {}, added: [], paint: {}, pieces: [], blank: false }).tree;
+  assert.equal(full.children[0].children.length, 2);
+});

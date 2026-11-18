@@ -1215,6 +1215,12 @@ function resolvePremade(catalog, input) {
   return { ...input, added, ...(missing.size ? { unresolved: [...missing] } : {}) };
 }
 
+const GOOP_EVENTS = new Set(['MapEventSinkInPollution', 'MapEventSinkInPollutionReset', 'MapEventSinkBianco']);
+function removeWhere(tree, test) {
+  const go = node => { if (node.children) node.children = node.children.filter(child => { if (test(child)) return false; go(child); return true; }); };
+  go(tree);
+}
+
 // The stage's scene with the project's edits: objects moved, removed and
 // added, with the managers added characters need.
 function buildScene(library, project) {
@@ -1233,6 +1239,11 @@ function buildScene(library, project) {
     const parent = sceneBin.find(tree, parts.join('/'));
     parent?.children?.splice(index, 1);
   }
+  // An emptied stage has no goop (buildArchive drops map/ymap.ymp), and the events that sink buildings
+  // into it read its layers as they load (TMapEventSinkInPollution::loadAfter, Bianco Hills' and
+  // others): they'd crash, and there's nothing left for them to sink. TMarDirector looks for them by
+  // name and goes on without them.
+  if (project.blank) removeWhere(tree, node => !node.children && GOOP_EVENTS.has(node.type));
   const needs = new Map();  // scene -> Set of files to copy
   for (const added of project.added) {
     const bound = worldBound(added);

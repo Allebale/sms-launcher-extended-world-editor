@@ -21,7 +21,8 @@
       "World editor: levels whose ground has more corners than the game can hold (32,767) now say so instead of crashing the game as it loads; the budget panel shows the real limit.",
       "World editor: a Sun setting turns the stage's sun to morning, noon, 3 pm or evening.",
       "World editor: levels can hold hanging wires for Mario to grab, drawn in the editor and made by the game.",
-      "World editor: premade level files can place coins, Shines, enemies and more by name, found on your own disc when you import them."
+      "World editor: plain levels and emptied stages built on Bianco Hills no longer crash as they load.",
+    "World editor: premade level files can place coins, Shines, enemies and more by name, found on your own disc when you import them."
     ],
     "game": [
       "Split-screen co-op: jumping while carrying the other player no longer pushes you sideways.",
