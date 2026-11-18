@@ -1342,6 +1342,24 @@ function applyWires(tree, wires) {
   archive.treePut(tree, originalPath(tree, 'map/tables.bin'), sceneBin.serialize(tables));
 }
 
+// What the stage's characters say (map/message.bmg, which its event scripts pick from by number):
+// each message becomes the level's lines in turn, so every character says one of them.
+function messageCount(data) {
+  for (let at = 0x20; at + 8 <= data.length; at += data.readUInt32BE(at + 4)) {
+    if (data.toString('ascii', at, at + 4) === 'INF1') return data.readUInt16BE(at + 8);
+    if (!data.readUInt32BE(at + 4)) break;
+  }
+  return 0;
+}
+function applyMessages(tree, messages) {
+  if (!messages?.length) return;
+  const found = archive.treeFile(tree, 'map/message.bmg');
+  if (!found) return;   // a stage nobody talks in
+  const data = Buffer.from(found.file.data), changes = {};
+  for (let i = 0; i < messageCount(data); i++) changes[i] = messages[i % messages.length];
+  archive.treePut(tree, originalPath(tree, 'map/message.bmg'), setMessages(data, changes));
+}
+
 // A MapStaticObj from the disc to copy for models in files of their own: its data up to its table
 // name (transform, TActor's name and light map), and the group it's in.
 function staticObjTemplate(library) {
@@ -1507,6 +1525,7 @@ function buildArchive(library, project) {
   }
   applyRetextures(tree, project.retextures);
   applyWires(tree, project.wires);
+  applyMessages(tree, project.messages);
   return { data: archive.yaz0Encode(archive.writeTree(tree)), copied };
 }
 
@@ -1636,5 +1655,5 @@ function originalPath(tree, file) {
 module.exports = {
   Library, WORLDS, CATEGORIES, SURFACES, GROUND_TYPES, CAMERA_TYPES, CATALOG_VERSION, PROJECT_FORMAT, FLOOR_NORMAL, worldOf, sceneLabel, buildCatalog, loadLevel, cleanProject,
   buildScene, buildCollision, buildModel, buildArchive, stageTable, stageStart, playTexts, setMessages, readTransform, writeTransform, describe, categoryOf, labelOf, humanize, fitManagers,
-  paintNpc, parseNpcLook, NPC_TYPES, retexturable, applyRetextures, growCollisionPools, levelBudget, setSun, applyWires, wireCube, resolvePremade,
+  paintNpc, parseNpcLook, NPC_TYPES, retexturable, applyRetextures, growCollisionPools, levelBudget, setSun, applyWires, wireCube, resolvePremade, applyMessages,
 };

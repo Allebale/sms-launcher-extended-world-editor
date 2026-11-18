@@ -300,6 +300,27 @@ test('a message bank takes a new text for one message, or for all of them, and k
   assert.deepEqual(read(world.setMessages(file, {}, '')), ['', '', '']);
 });
 
+test('a level\'s lines replace what the stage\'s characters say, in turn, and wires go in its wire table', () => {
+  const sceneBin = require('../src/scene-bin');
+  const head = Buffer.alloc(0x20); head.write('MESGbmg1', 0, 'ascii'); head.writeUInt32BE(2, 12);
+  const inf = Buffer.alloc(0x20); inf.write('INF1', 0, 'ascii'); inf.writeUInt32BE(0x20, 4); inf.writeUInt16BE(3, 8); inf.writeUInt16BE(4, 10);
+  const text = Buffer.from('\0ONE\0TWO\0THREE\0', 'latin1');
+  [1, 5, 9].forEach((offset, i) => inf.writeUInt32BE(offset, 16 + i * 4));
+  const dat = Buffer.concat([Buffer.from('DAT1\0\0\0\0', 'latin1'), text, Buffer.alloc(32 - (text.length + 8) % 32)]);
+  dat.writeUInt32BE(dat.length, 4);
+  const tables = sceneBin.serialize({ type: 'NameRefGrp', nameBytes: Buffer.from('t'), data: Buffer.alloc(0), children: [] });
+  const tree = { root: { name: 'scene', entries: [{ dir: { name: 'map', entries: [{ file: { name: 'message.bmg', flags: 0x11, id: 0, data: Buffer.concat([head, inf, dat]) } },
+    { file: { name: 'tables.bin', flags: 0x11, id: 1, data: tables } }] } }] } };
+  world.applyMessages(tree, ['Merry Christmas!', 'Brr, it\'s cold.']);
+  const data = tree.root.entries[0].dir.entries[0].file.data;
+  const at = i => data.readUInt32BE(0x30 + i * 4) + 0x40 + 8;
+  assert.deepEqual([0, 1, 2].map(i => data.toString('latin1', at(i), data.indexOf(0, at(i)))), ['Merry Christmas!', 'Brr, it\'s cold.', 'Merry Christmas!']);
+  world.applyWires(tree, [{ a: [0, 500, 0], b: [0, 500, 1000] }]);
+  const back = sceneBin.parse(tree.root.entries[0].dir.entries[1].file.data);
+  assert.equal(sceneBin.decodeName(back.children[0].nameBytes), 'ワイヤーキューブテーブル');
+  assert.equal(back.children[0].children[0].type, 'CubeGeneralInfo');
+});
+
 test('players\' own textures are kept checked, and written as the game\'s compressed format with smaller levels', () => {
   const stage = require('../src/world-stage');
   const { writePng } = require('../src/texture-image');

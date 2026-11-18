@@ -616,7 +616,10 @@ function cleanStage(input, scenes) {
     return [{ uid: String(wire.uid || '').slice(0, 80), a: [...wire.a], b: [...wire.b] }];
   });
   const sun = SUN_TIMES[input?.sun] ? input.sun : '';
-  return { texturePaint, pieces, blank: Boolean(input?.blank || input?.plain), plain: Boolean(input?.plain), textures: cleanUserTextures(input?.textures), models, retextures: cleanRetextures(input?.retextures), wires, sun };
+  // What the stage's characters say: every message of its message file, in turn (each line up to 3 rows)
+  const messages = (Array.isArray(input?.messages) ? input.messages : []).slice(0, 64)
+    .map(text => String(text ?? '').replace(/\r/g, '').replace(/[^\x20-\x7e\n]/g, '').slice(0, 300)).filter(text => text.trim());
+  return { texturePaint, pieces, blank: Boolean(input?.blank || input?.plain), plain: Boolean(input?.plain), textures: cleanUserTextures(input?.textures), models, retextures: cleanRetextures(input?.retextures), wires, sun, messages };
 }
 // The stage's MapWireManager makes room for 200 wires (bianco0 and the others alike).
 const MAX_WIRES = 200;

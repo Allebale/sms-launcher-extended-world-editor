@@ -23,7 +23,8 @@
       "World editor: levels can hold hanging wires for Mario to grab, drawn in the editor and made by the game.",
       "World editor: plain levels and emptied stages built on Bianco Hills no longer crash as they load.",
       "World editor: premade level files can place coins, Shines, enemies and more by name, found on your own disc when you import them.",
-      "World editor: in plain levels Mario can fall off edges and down holes again, instead of being stopped by an invisible wall."
+      "World editor: in plain levels Mario can fall off edges and down holes again, instead of being stopped by an invisible wall.",
+      "World editor: level files can give the stage's Piantas and other characters their own lines to say."
     ],
     "game": [
       "Split-screen co-op: jumping while carrying the other player no longer pushes you sideways.",
