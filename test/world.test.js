@@ -532,9 +532,10 @@ test('on a real disc, a model in a file of its own exports its model, its ground
   ] }, lib.scenes());
   const files = archive.rarc(archive.yaz0(world.buildArchive(lib, level).data));
   const slot = require('../src/world-stage').freeSlots(lib, 'dolpic0').find(s => s.ground).name;
-  const own = j3d.parseBmd(files.get(`map/map/${slot.toLowerCase()}.bmd`) || files.get(`map/map/${slot}.bmd`));
+  // the game finds archive files by their lower-case names
+  const own = j3d.parseBmd(files.get(`map/map/${slot.toLowerCase()}.bmd`));
   assert.ok(own.textures.every(t => t.width <= 8 || t.name.startsWith('model-')));
-  assert.ok(files.has(`map/map/${slot.toLowerCase()}.col`) || files.has(`map/map/${slot}.col`));
+  assert.ok(files.has(`map/map/${slot.toLowerCase()}.col`));
   const scene = sceneBin.parse(files.get('map/scene.bin'));
   let copies = 0;
   sceneBin.walk(scene, node => { if (node.type === 'MapStaticObj' && node.data.includes(Buffer.from(slot))) copies++; });

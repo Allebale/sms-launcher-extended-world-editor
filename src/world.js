@@ -1371,9 +1371,10 @@ function buildArchive(library, project) {
   const tree = archive.readTree(library.read(archiveFile(project.base)));
   const { tree: scene, needs, separate } = buildScene(library, project);
   archive.treePut(tree, 'map/scene.bin', sceneBin.serialize(scene));
+  // in lower case: the game's archives find files by their lower-case names (JKRArchive::CArcName)
   for (const { slot, bmd, col } of separate) {
-    archive.treePut(tree, `map/map/${slot.name}.bmd`, bmd);
-    if (col) archive.treePut(tree, `map/map/${slot.name}.col`, col);
+    archive.treePut(tree, `map/map/${slot.name.toLowerCase()}.bmd`, bmd);
+    if (col) archive.treePut(tree, `map/map/${slot.name.toLowerCase()}.col`, col);
   }
   if (Object.keys(project.paint).length || stage.hasStageEdits(project)) archive.treePut(tree, 'map/map.col', buildCollision(library, project));
   const map = buildModel(library, project);
