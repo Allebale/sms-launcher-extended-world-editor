@@ -609,8 +609,24 @@ function cleanStage(input, scenes) {
     const textures = { top: ID.test(piece.textures?.top) ? piece.textures.top : 'delfino-tiles', side: ID.test(piece.textures?.side) ? piece.textures.side : 'delfino-white-wall' };
     return [{ uid, kind: piece.kind, label, position: [...piece.position], yaw, size: build.cleanSize(piece.kind, piece.size), textures, ground: ID.test(piece.ground) ? piece.ground : null }];
   });
-  return { texturePaint, pieces, blank: Boolean(input?.blank || input?.plain), plain: Boolean(input?.plain), textures: cleanUserTextures(input?.textures), models, retextures: cleanRetextures(input?.retextures) };
+  // Hanging wires Mario can grab: two ends each, in game units
+  const wires = (Array.isArray(input?.wires) ? input.wires : []).slice(0, MAX_WIRES).flatMap(wire => {
+    const ok = v => Array.isArray(v) && v.length === 3 && v.every(x => finite(x));
+    if (!wire || !ok(wire.a) || !ok(wire.b) || Math.hypot(wire.b[0] - wire.a[0], wire.b[2] - wire.a[2]) < 150) return [];
+    return [{ uid: String(wire.uid || '').slice(0, 80), a: [...wire.a], b: [...wire.b] }];
+  });
+  const sun = SUN_TIMES[input?.sun] ? input.sun : '';
+  return { texturePaint, pieces, blank: Boolean(input?.blank || input?.plain), plain: Boolean(input?.plain), textures: cleanUserTextures(input?.textures), models, retextures: cleanRetextures(input?.retextures), wires, sun };
 }
+// The stage's MapWireManager makes room for 200 wires (bianco0 and the others alike).
+const MAX_WIRES = 200;
+// Where the sun stands, as the light's direction toward it: [toward +X, up, toward +Z] (any length).
+const SUN_TIMES = {
+  morning: { label: 'Morning', direction: [0.75, 0.42, 0.5] },
+  noon: { label: 'Noon', direction: [0.25, 1, 0.2] },
+  afternoon: { label: 'Afternoon (3 pm)', direction: [-0.68, 0.52, 0.5] },
+  evening: { label: 'Evening', direction: [-0.85, 0.22, 0.45] },
+};
 const hasStageEdits = project => project.blank || Object.keys(project.texturePaint || {}).length > 0 || (project.pieces || []).length > 0;
 
 // --- Models in files of their own ------------------------------------------------------
@@ -1046,5 +1062,5 @@ function invert(m) {
 module.exports = {
   PALETTE, PALETTE_GROUPS, PREFABS, palette, paletteModel, isUserTexture, cleanUserTextures, userBti, userEntry, setUserTextures, setUserModels, cleanRetextures, retextureImage, prefabs, prefabModel, prefabRef, parsePrefabRef, stageModel,
   cleanStage, hasStageEdits, buildMap, buildGround, buildSea, openSea, plainTemplate, EMPTY_KEEPS, texAffine, untexAffine, plainTexMatrices,
-  buildSeparate, separateGround, separateModels, freeSlots, SEPARATE_SLOTS, SEPARATE_MAX,
+  buildSeparate, separateGround, separateModels, freeSlots, SEPARATE_SLOTS, SEPARATE_MAX, MAX_WIRES, SUN_TIMES,
 };

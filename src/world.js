@@ -1192,6 +1192,29 @@ function cleanProject(input, scenes) {
   };
 }
 
+// A level made outside the editor (a premade level file) can name what it places by the catalog's
+// key ("CoinRed", "Shine", "HamuKuri") instead of where on the disc it comes from: each such
+// entry takes the first catalog item with that key (or else that type), as placing it would.
+function resolvePremade(catalog, input) {
+  if (!input || !Array.isArray(input.added)) return input;
+  const items = catalog?.items || [];
+  const byKey = new Map(), byType = new Map();
+  for (const item of items) { if (!byKey.has(item.key)) byKey.set(item.key, item); if (!byType.has(item.type)) byType.set(item.type, item); }
+  const missing = new Set();
+  const added = input.added.flatMap(entry => {
+    if (entry?.source?.scene && entry.source.id !== undefined) {
+      // a particular object from the disc: how the catalog shows its kind, where the file leaves it out
+      const like = !entry.model && !entry.label && (byKey.get(String(entry.key || '')) || byType.get(String(entry.type || entry.key || '')));
+      return [like ? { ...entry, key: like.key, type: like.type, variant: like.variant, label: like.label, category: like.category, model: like.model, note: like.note } : entry];
+    }
+    const item = byKey.get(String(entry?.key || '')) || byType.get(String(entry?.type || entry?.key || ''));
+    if (!item) { missing.add(String(entry?.label || entry?.key || entry?.type || 'something')); return []; }
+    return [{ uid: entry.uid, key: item.key, source: item.source, type: item.type, variant: item.variant, label: item.label, category: item.category,
+      model: item.model, note: item.note, transform: entry.transform || { position: [0, 0, 0], rotation: [0, 0, 0], scale: [...(item.scale || [1, 1, 1])] } }];
+  });
+  return { ...input, added, ...(missing.size ? { unresolved: [...missing] } : {}) };
+}
+
 // The stage's scene with the project's edits: objects moved, removed and
 // added, with the managers added characters need.
 function buildScene(library, project) {
@@ -1242,12 +1265,70 @@ function buildScene(library, project) {
       ? `${who} only works in ${need.where}: it moves parts of that stage, and the game crashes anywhere else. Remove it to export or play this level.`
       : `${who} needs ${need.what}, found in ${need.where}, and the game crashes without ${need.names?.length > 1 ? 'them' : 'it'}. Remove it, or place ${need.names?.length > 1 ? 'them' : 'it'} too, to export or play this level.`);
   }
+  if (project.sun) setSun(tree, stage.SUN_TIMES[project.sun].direction);
   const raised = fitManagers(tree);
   // Models in files of their own: an object showing the model (and setting its ground) where each copy stands.
   const separate = stage.hasStageEdits(project) ? stage.buildSeparate(library, project, SURFACES) : [];
   if (separate.length) addSeparateObjects(library, tree, separate);
   if (Object.keys(project.paint).length || stage.hasStageEdits(project)) growCollisionPools(library, project, tree, buildCollision(library, project), separate);
   return { tree, needs, raised, separate };
+}
+
+// The sun: the stage's lights from the sun (and the ones opposite it, which light from below) and
+// the sun in the sky, turned to stand toward `direction`. Each Light starts with its position
+// (TLightCommon); the SunModel's is its transform's.
+function setSun(tree, direction) {
+  const sunId = findId(tree, node => !node.children && node.type === 'SunModel');
+  const sunModel = sunId !== null ? sceneBin.find(tree, sunId) : null, sunTransform = sunModel && readTransform(sunModel.data);
+  let from = sunTransform?.position || null;
+  const lights = [];
+  sceneBin.walk(tree, node => { if (!node.children && node.type === 'Light' && node.data.length >= 12) lights.push(node); });
+  if (!from && lights.length) from = [0, 4, 8].map(k => lights[0].data.readFloatBE(k));
+  if (!from) return;
+  const length = Math.hypot(...from) || 500000, unit = Math.hypot(...direction);
+  const to = direction.map(v => v / unit * length);
+  const near = (a, b) => a.every((v, k) => Math.abs(v - b[k]) <= Math.abs(b[k]) * 0.01 + 1);
+  for (const light of lights) {
+    const at = [0, 4, 8].map(k => light.data.readFloatBE(k));
+    const target = near(at, from) ? to : near(at, from.map(v => -v)) ? to.map(v => -v) : null;
+    if (target) target.forEach((v, k) => light.data.writeFloatBE(v, k * 4));
+  }
+  if (sunTransform) writeTransform(sunModel.data, { ...sunTransform, position: to });
+}
+function findId(tree, test) {
+  let found = null;
+  sceneBin.walk(tree, (node, id) => { if (found === null && test(node)) found = id; });
+  return found;
+}
+
+// Hanging wires (TMapWire): the cubes of map/tables.bin's wire table, one a wire, which TMapWireManager
+// makes into wires as the stage loads. A cube stands on its middle, turned about Y: the wire runs along
+// its length (Z) at its top, and Mario grabs it from inside the cube (CLBIsPointInCube).
+const WIRE_TABLE = 'ワイヤーキューブテーブル', WIRE_TABLE_SJIS = Buffer.from('838f83438384815b834c8385815b83758365815b8375838b', 'hex');
+const WIRE_DROP = 250, WIRE_WIDTH = 200;
+function wireCube(wire, n) {
+  const [a, b] = [wire.a, wire.b], top = (a[1] + b[1]) / 2;
+  const length = Math.hypot(b[0] - a[0], b[2] - a[2]);
+  const yaw = Math.atan2(b[0] - a[0], b[2] - a[2]) * 180 / Math.PI;
+  const data = Buffer.alloc(9 * 4 + 12);
+  [(a[0] + b[0]) / 2, top - WIRE_DROP, (a[2] + b[2]) / 2, 0, yaw, 0, WIRE_WIDTH / 100, WIRE_DROP / 100, length / 100].forEach((v, k) => data.writeFloatBE(v, k * 4));
+  return { type: 'CubeGeneralInfo', nameBytes: Buffer.from(`wire ${n}`, 'latin1'), data, children: null };
+}
+function applyWires(tree, wires) {
+  if (!wires?.length) return;
+  const found = archive.treeFile(tree, 'map/tables.bin');
+  if (!found) throw new Error('This stage has no table for wires, so wires can\'t be added to it.');
+  const tables = sceneBin.parse(Buffer.from(found.file.data));
+  let table = null;
+  sceneBin.walk(tables, node => { if (!table && node.children && sceneBin.decodeName(node.nameBytes) === WIRE_TABLE) table = node; });
+  if (!table) {
+    if (!tables.children) throw new Error('This stage\'s tables can\'t take wires.');
+    table = { type: 'CubeGeneralInfoTable', nameBytes: Buffer.from(WIRE_TABLE_SJIS), data: Buffer.alloc(0), children: [] };
+    tables.children.push(table);
+  }
+  const start = table.children.length;
+  wires.forEach((wire, i) => table.children.push(wireCube(wire, start + i)));
+  archive.treePut(tree, originalPath(tree, 'map/tables.bin'), sceneBin.serialize(tables));
 }
 
 // A MapStaticObj from the disc to copy for models in files of their own: its data up to its table
@@ -1414,6 +1495,7 @@ function buildArchive(library, project) {
     }
   }
   applyRetextures(tree, project.retextures);
+  applyWires(tree, project.wires);
   return { data: archive.yaz0Encode(archive.writeTree(tree)), copied };
 }
 
@@ -1543,5 +1625,5 @@ function originalPath(tree, file) {
 module.exports = {
   Library, WORLDS, CATEGORIES, SURFACES, GROUND_TYPES, CAMERA_TYPES, CATALOG_VERSION, PROJECT_FORMAT, FLOOR_NORMAL, worldOf, sceneLabel, buildCatalog, loadLevel, cleanProject,
   buildScene, buildCollision, buildModel, buildArchive, stageTable, stageStart, playTexts, setMessages, readTransform, writeTransform, describe, categoryOf, labelOf, humanize, fitManagers,
-  paintNpc, parseNpcLook, NPC_TYPES, retexturable, applyRetextures, growCollisionPools, levelBudget,
+  paintNpc, parseNpcLook, NPC_TYPES, retexturable, applyRetextures, growCollisionPools, levelBudget, setSun, applyWires, wireCube, resolvePremade,
 };

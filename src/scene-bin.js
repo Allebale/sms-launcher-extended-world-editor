@@ -18,6 +18,8 @@ const sjis = new TextDecoder('shift_jis');
 const GROUPS = {
   GroupObj: () => 0, NameRefGrp: () => 0, LightAry: () => 0, AmbAry: () => 0, Strategy: () => 0,
   IdxGroup: () => 4,
+  // map/tables.bin's tables: TNameRefPtrAryT (Strategic/NameRefPtrAry.tpp) reads a count, then the nodes
+  CubeGeneralInfoTable: () => 0, StreamGeneralInfoTable: () => 0,
   MarScene: (buffer, at) => {
     let p = at + 4;
     for (let n = buffer.readInt32BE(at); n > 0; n--) p += 4 + 2 + buffer.readUInt16BE(p + 4);

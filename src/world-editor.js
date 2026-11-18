@@ -117,7 +117,7 @@ async function openLevel(scene, saved = null) {
 }
 
 function newProject(scene) {
-  return { format: 'sms-world', version: 1, name: `My ${sceneLabel(scene)}`, base: scene, disc: levels.disc.gameId, edits: {}, added: [], paint: {}, pieces: [], texturePaint: {}, blank: false, plain: false, textures: [], models: [], retextures: {} };
+  return { format: 'sms-world', version: 1, name: `My ${sceneLabel(scene)}`, base: scene, disc: levels.disc.gameId, edits: {}, added: [], paint: {}, pieces: [], texturePaint: {}, blank: false, plain: false, textures: [], models: [], retextures: {}, wires: [], sun: '' };
 }
 
 // A plain level: a stage emptied of everything but Mario's start, its sea too (its sky stays),
@@ -567,6 +567,7 @@ function startWalk() {
 function stopWalk() { view?.stopWalk(); }
 
 $('world-show-ground').addEventListener('change', syncButtons);
+$('world-sun').addEventListener('change', event => { if (project) change('Sun', () => { project.sun = event.target.value; }); });
 $('world-brush-size').addEventListener('input', event => { brush.radius = Number(event.target.value); $('world-brush-size-value').textContent = `${Math.round(brush.radius / 100)} m`; view?.setBrushRadius(brush.radius); });
 
 function renderSurfaceSwatches() {
@@ -991,6 +992,10 @@ function renderInspector() {
   $('world-inspector-empty').hidden = Boolean(object);
   $('world-inspector-body').hidden = !object;
   if (!object) {
+    $('world-sun').value = project.sun || '';
+    const wireCount = (project.wires || []).length;
+    $('world-wires-info').hidden = !wireCount;
+    $('world-wires-info').textContent = `${wireCount} hanging wire${wireCount === 1 ? '' : 's'} for Mario to grab (from the level file), drawn as dark lines.`;
     if (level) $('world-level-info').textContent = `${sceneLabel(project.base)}${project.blank ? ' (emptied)' : ''} · ${level.objects.filter(o => o.transform).length} objects from the disc · ${project.added.length} added · ${Object.keys(project.edits).length} edited · ${project.pieces.length} pieces built or copied · ${Object.keys(project.texturePaint).length} faces retextured · ${Object.keys(project.paint).length} ground triangles painted`;
     return;
   }
@@ -1179,7 +1184,7 @@ function duplicateSelected() {
 
 $('world-revert').addEventListener('click', () => {
   if (!project || !confirm('Undo every change to this stage? You can still undo this.')) return;
-  change('Revert', () => { project.edits = {}; project.added = []; project.paint = {}; project.pieces = []; project.texturePaint = {}; project.blank = false; texturePaintVersion++; selected = null; });
+  change('Revert', () => { project.edits = {}; project.added = []; project.paint = {}; project.pieces = []; project.texturePaint = {}; project.blank = false; project.wires = []; project.sun = ''; texturePaintVersion++; selected = null; });
   view?.repaintAll(project.paint);
 });
 
@@ -1544,7 +1549,29 @@ function createView(canvas) {
     if (overlay) overlay.mesh.visible = overlayOn && !blank;
     const key = JSON.stringify([blank, plainView, project.pieces]);
     if (key !== stageKey) { stageKey = key; rebuildGround(project.pieces); }
+    showWires(project.wires || []);
     if (version !== paintedVersion) { paintedVersion = version; showTexturePaint(project.texturePaint); }
+  }
+
+  // Hanging wires: sagging lines between their ends, as the game draws them.
+  const wireGroup = new THREE.Group();
+  scene.add(wireGroup);
+  let wiresKey = '';
+  function showWires(wires) {
+    const key = JSON.stringify(wires);
+    if (key === wiresKey) return;
+    wiresKey = key;
+    wireGroup.children.forEach(line => line.geometry.dispose());
+    wireGroup.clear();
+    const material = new THREE.LineBasicMaterial({ color: 0x2a2a2a });
+    for (const { a, b } of wires) {
+      const points = [];
+      for (let i = 0; i <= 16; i++) {
+        const t = i / 16, sag = 60 * Math.sin(Math.PI * t);
+        points.push(new THREE.Vector3(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t - sag, a[2] + (b[2] - a[2]) * t));
+      }
+      wireGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), material));
+    }
   }
 
   // Ground to walk and place on: the stage's (unless emptied) and the pieces'.

@@ -1584,9 +1584,17 @@ function worldProjects() {
     } catch (_) { return []; }
   }).sort((a, b) => String(b.savedAt).localeCompare(String(a.savedAt)));
 }
-function worldOpen(file) {
+async function worldOpen(file) {
   const resolved = worldLevelFile(file);
-  return { ...worldProject(JSON.parse(fs.readFileSync(resolved, 'utf8'))), file: resolved };
+  return { ...worldProject(await worldPremade(JSON.parse(fs.readFileSync(resolved, 'utf8')))), file: resolved };
+}
+// Things a premade level names by kind, found on this disc (world.resolvePremade).
+async function worldPremade(input) {
+  if (!Array.isArray(input?.added) || input.added.every(entry => entry?.source?.scene && (entry.label || entry.model))) return input;
+  const resolved = world.resolvePremade(await worldCatalog(), input);
+  if (resolved.unresolved) log(`World editor: this level places things this disc doesn't have, left out: ${resolved.unresolved.join(', ')}.`);
+  delete resolved.unresolved;
+  return resolved;
 }
 
 async function worldExport(event, input, kind) {
@@ -1762,7 +1770,7 @@ async function worldImport(event) {
   if (stat.size > 64 << 20) throw new Error('That file is too large to be a level.');
   let input;
   try { input = JSON.parse(fs.readFileSync(chosen.filePaths[0], 'utf8')); } catch (_) { throw new Error('That file isn\'t a level from the world editor.'); }
-  return worldProject(input);
+  return worldProject(await worldPremade(input));
 }
 
 // Customize Mario's colours for the game: Mario's textures repainted, as a

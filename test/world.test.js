@@ -584,3 +584,47 @@ test('the stage\'s ground stops at the 32,767 corners the game reads', () => {
   assert.ok(collisionFile.compose(null, { add: strip(10922) }));  // 32,766 corners
   assert.throws(() => collisionFile.compose(null, { add: strip(10923) }), /32,767/);
 });
+
+test('wires become cubes in the stage\'s wire table, with the wire along the top', () => {
+  const sceneBin = require('../src/scene-bin');
+  const cube = world.wireCube({ a: [0, 500, 0], b: [0, 500, 1000] }, 0);
+  const f = k => cube.data.readFloatBE(k * 4);
+  assert.deepEqual([f(0), f(1), f(2)], [0, 250, 500]);          // stands below the middle
+  assert.equal(Math.round(f(4)), 0);                              // turned so its length runs along Z
+  assert.deepEqual([f(7), f(8)], [2.5, 10]);                      // 250 high (the wire on top), 1000 long
+  const east = world.wireCube({ a: [0, 0, 0], b: [1000, 0, 0] }, 1);
+  assert.equal(Math.round(east.data.readFloatBE(16)), 90);
+  // A table is read and written like a scene: the cubes are its children.
+  const table = { type: 'CubeGeneralInfoTable', nameBytes: Buffer.from('t'), data: Buffer.alloc(0), children: [cube, east] };
+  const root = { type: 'NameRefGrp', nameBytes: Buffer.from('r'), data: Buffer.alloc(0), children: [table] };
+  const back = sceneBin.parse(sceneBin.serialize(root));
+  assert.equal(back.children[0].children.length, 2);
+  assert.ok(back.children[0].children[1].data.equals(east.data));
+});
+
+test('the sun turns the stage\'s sun lights, the ones opposite and the sun in the sky', () => {
+  const light = (x, y, z) => { const b = Buffer.alloc(20); [x, y, z].forEach((v, k) => b.writeFloatBE(v, k * 4)); return { type: 'Light', nameBytes: Buffer.from('l'), data: b, children: null }; };
+  const sun = light(200000, 500000, 200000), below = light(-200000, -500000, -200000), other = light(0, 100, 0);
+  const tree = { type: 'GroupObj', nameBytes: Buffer.from('r'), data: Buffer.alloc(0), children: [sun, below, other] };
+  world.setSun(tree, [-1, 1, 0]);
+  const at = n => [0, 4, 8].map(k => Math.round(n.data.readFloatBE(k) / 100) + 0);
+  const r = Math.round(Math.hypot(200000, 500000, 200000) / Math.SQRT2 / 100);
+  assert.deepEqual(at(sun), [-r, r, 0]);
+  assert.deepEqual(at(below), [r, -r, 0]);
+  assert.deepEqual(at(other), [0, 1, 0]);
+});
+
+test('a premade level\'s things named by kind are found in the catalog', () => {
+  const catalog = { items: [
+    { key: 'Coin', type: 'Coin', label: 'Coin', category: 'items', source: { scene: 'bianco0', id: '6/2/3/1' }, model: 'm', scale: [1, 1, 1] },
+    { key: 'HamuKuri:x', type: 'HamuKuri', label: 'Strollin\' Stu', category: 'enemies', source: { scene: 'dolpic0', id: '6/2/7/0' }, model: null, scale: [1, 1, 1] },
+  ] };
+  const t = { position: [1, 2, 3], rotation: [0, 0, 0], scale: [1, 1, 1] };
+  const out = world.resolvePremade(catalog, { added: [{ key: 'Coin', transform: t }, { type: 'HamuKuri', transform: t }, { key: 'Nothing', transform: t },
+    { source: { scene: 'bianco0', id: '1' }, transform: t }] });
+  assert.equal(out.added.length, 3);
+  assert.deepEqual(out.added[0].source, { scene: 'bianco0', id: '6/2/3/1' });
+  assert.equal(out.added[1].key, 'HamuKuri:x');
+  assert.deepEqual(out.added[1].transform.position, [1, 2, 3]);
+  assert.deepEqual(out.unresolved, ['Nothing']);
+});

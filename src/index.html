@@ -244,10 +244,12 @@
               <p id="world-level-info" class="helper"></p>
               <div id="world-budget" class="world-budget" aria-live="polite">
                 <h3>Budget</h3>
-                <p class="helper">The game holds up to 65,536 corners in a stage model and in its ground. Big models can go in model files of their own, which have their own; their ground stays the stage's.</p>
+                <p class="helper">The game holds up to 65,536 corners in a stage model, and 32,767 in its ground. Big models can go in model files of their own, which have their own; their ground stays the stage's.</p>
                 <div id="world-budget-rows" class="world-budget-rows"></div>
                 <p id="world-budget-note" class="helper world-note" hidden></p>
               </div>
+              <label class="world-field"><span>Sun</span><select id="world-sun" aria-label="Where the sun stands"><option value="">As the stage has it</option><option value="morning">Morning</option><option value="noon">Noon</option><option value="afternoon">Afternoon (3 pm)</option><option value="evening">Evening</option></select></label>
+              <p id="world-wires-info" class="helper" hidden></p>
               <label class="switch world-switch"><span><strong>Show ground types</strong><small>Colours the ground by type. Always on while painting.</small></span><input id="world-show-ground" type="checkbox"><i></i></label>
               <button id="world-revert" class="text-button">Undo every change to this stage</button>
             </div>
