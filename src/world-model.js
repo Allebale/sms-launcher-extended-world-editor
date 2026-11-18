@@ -36,7 +36,7 @@ function swatch([r, g, b, a]) {
   return { width: 8, height: 8, rgba };
 }
 
-// The model from a .glb: { parts: [{ texture, cutout, unlit, position, normal, uv, color, index }], size }.
+// The model from a .glb: { parts: [{ texture, cutout, unlit, wrap, position, normal, uv, color, index }], size }.
 // `decodeImage(bytes)` turns an embedded picture into { width, height, rgba }
 // with sides a power of two (the main process does it with Chromium).
 // Positions are in game units, standing on y = 0 and centred on x and z;
@@ -72,13 +72,27 @@ function readGlb(data, decodeImage) {
           for (const v of [a, b, c]) for (let k = 0; k < 3; k++) n[v * 3 + k] += f[k];
         }
       }
-      const st = A.TEXCOORD_0 !== undefined ? glb.accessor(A.TEXCOORD_0) : null;
+      let st = A.TEXCOORD_0 !== undefined ? glb.accessor(A.TEXCOORD_0) : null;
+      // KHR_texture_transform on the texture: the coordinates moved, turned and scaled as it says
+      const tt = g.materials[prim.material ?? -1]?.pbrMetallicRoughness?.baseColorTexture?.extensions?.KHR_texture_transform;
+      if (st && tt) {
+        const [ox, oy] = tt.offset || [0, 0], [sx, sy] = tt.scale || [1, 1], r = tt.rotation || 0, c = Math.cos(r), s = Math.sin(r);
+        st = Float64Array.from(st);
+        for (let v = 0; v < st.length; v += 2) {
+          const u = st[v] * sx, w = st[v + 1] * sy;
+          st[v] = c * u + s * w + ox; st[v + 1] = -s * u + c * w + oy;
+        }
+      }
       const colorWidth = A.COLOR_0 !== undefined ? (g.accessors[A.COLOR_0].type === 'VEC4' ? 4 : 3) : 0;
       const colors = colorWidth ? glb.accessor(A.COLOR_0) : null;
       const material = prim.material ?? -1;
       if (!byMaterial.has(material)) {
         if (byMaterial.size >= MAX_PARTS) throw new Error(`The model has more than ${MAX_PARTS} materials: join some (one texture can cover several) and try again.`);
         byMaterial.set(material, { position: [], normal: [], uv: [], color: [], index: [] });
+        // how its texture repeats (GX: 0 clamp, 1 repeat, 2 mirror), from its glTF sampler
+        const ref = g.materials[material]?.pbrMetallicRoughness?.baseColorTexture, sampler = ref && g.samplers?.[g.textures[ref.index]?.sampler];
+        const wrapOf = mode => mode === 33071 ? 0 : mode === 33648 ? 2 : 1;
+        byMaterial.get(material).wrap = [wrapOf(sampler?.wrapS), wrapOf(sampler?.wrapT)];
       }
       const part = byMaterial.get(material), base = part.position.length / 3;
       for (let v = 0; v < count; v++) {
@@ -119,7 +133,7 @@ function readGlb(data, decodeImage) {
     return {
       texture: texture || swatch(factor), cutout: m.alphaMode === 'MASK' || m.alphaMode === 'BLEND',
       // KHR_materials_unlit: its light painted into its texture, so none added
-      unlit: Boolean(m.extensions?.KHR_materials_unlit),
+      unlit: Boolean(m.extensions?.KHR_materials_unlit), wrap: part.wrap,
       position: Float32Array.from(part.position), normal: Float32Array.from(part.normal), uv: Float32Array.from(part.uv),
       color, index: Uint32Array.from(part.index),
     };
@@ -141,12 +155,13 @@ function encodeModel({ id, label, parts, triangles, size }) {
   return {
     id, label, triangles, size,
     parts: parts.map(part => ({
-      png: writePng(part.texture.width, part.texture.height, part.texture.rgba).toString('base64'), cutout: part.cutout, ...(part.unlit ? { unlit: true } : {}),
+      png: writePng(part.texture.width, part.texture.height, part.texture.rgba).toString('base64'), cutout: part.cutout, ...(part.unlit ? { unlit: true } : {}), wrap: part.wrap || [1, 1],
       position: b64(part.position), normal: b64(part.normal), uv: b64(part.uv), color: b64(part.color), index: b64(part.index),
     })),
   };
 }
 
+const wrapOk = w => Array.isArray(w) && w.length === 2 && w.every(v => v === 0 || v === 1 || v === 2);
 const powerOfTwo = v => Number.isInteger(v) && v >= 8 && v <= 512 && (v & (v - 1)) === 0;
 // Models in a level file, checked (not read: that's left to decodeModel).
 function cleanUserModels(input) {
@@ -154,7 +169,7 @@ function cleanUserModels(input) {
   for (const model of (Array.isArray(input) ? input : []).slice(0, MAX_MODELS * 2)) {
     if (!model || !isUserModel(model.id) || seen.has(model.id) || !Array.isArray(model.parts) || !model.parts.length || model.parts.length > MAX_PARTS) continue;
     const parts = model.parts.map(part => part && ['png', 'position', 'normal', 'uv', 'color', 'index'].every(k => typeof part[k] === 'string')
-      ? { png: part.png, cutout: Boolean(part.cutout), ...(part.unlit ? { unlit: true } : {}), position: part.position, normal: part.normal, uv: part.uv, color: part.color, index: part.index } : null);
+      ? { png: part.png, cutout: Boolean(part.cutout), ...(part.unlit ? { unlit: true } : {}), wrap: wrapOk(part.wrap) ? part.wrap.slice() : [1, 1], position: part.position, normal: part.normal, uv: part.uv, color: part.color, index: part.index } : null);
     if (parts.some(p => !p)) continue;
     const triangles = parts.reduce((n, p) => n + Buffer.from(p.index, 'base64').length / 12, 0);
     if (!(triangles > 0) || triangles > MAX_TRIANGLES) continue;
@@ -179,7 +194,7 @@ function decodeModel(model) {
       throw new Error(`${model.label}: the model in this level file is damaged.`);
     const texture = readPng(Buffer.from(part.png, 'base64'));
     if (!powerOfTwo(texture.width) || !powerOfTwo(texture.height)) throw new Error(`${model.label}: its textures' sides must be powers of two from 8 to 512.`);
-    return { texture, cutout: part.cutout, unlit: part.unlit, position, normal, uv, color, index };
+    return { texture, cutout: part.cutout, unlit: part.unlit, wrap: wrapOk(part.wrap) ? part.wrap : [1, 1], position, normal, uv, color, index };
   });
   const out = { ...model, parts };
   decoded.set(model.id, out);

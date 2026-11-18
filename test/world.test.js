@@ -461,4 +461,8 @@ test('players\' models keep their own texture coordinates and unlit look on any 
   assert.equal(clean.parts[0].unlit, true);
   assert.equal(models.decodeModel(clean).parts[0].unlit, true);
   assert.equal(models.readGlb(squareGlb(), () => null).parts[0].unlit, false);
+  // How its texture repeats is kept too (clamped across, mirrored down), and bad values become repeat.
+  const wrapped = models.cleanUserModels([{ ...stored, parts: [{ ...stored.parts[0], wrap: [0, 2] }] }, { ...stored, id: 'model-00000000000b', parts: [{ ...stored.parts[0], wrap: [5, 'x'] }] }]);
+  assert.deepEqual(wrapped.map(m => m.parts[0].wrap), [[0, 2], [1, 1]]);
+  assert.equal(stage.userBti({ width: 8, height: 8, rgba: new Uint8Array(256) }, { wrap: [0, 2] }).readUInt16BE(6), 0x0002);
 });

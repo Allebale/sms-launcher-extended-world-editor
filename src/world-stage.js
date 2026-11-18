@@ -297,7 +297,7 @@ function halve({ width, height, rgba }) {
 // the picture): CMPR at each size down to 8 texels, see-through where its
 // alpha is under half. Edges are laid once down their height, so they don't
 // repeat that way (clamped).
-function userBti(image, { cutout = false, edge = false } = {}) {
+function userBti(image, { cutout = false, edge = false, wrap = null } = {}) {
   const levels = [image];
   while (levels.length < 7 && levels[levels.length - 1].width >= 16 && levels[levels.length - 1].height >= 16) levels.push(halve(levels[levels.length - 1]));
   const opaque = !cutout;
@@ -312,8 +312,8 @@ function userBti(image, { cutout = false, edge = false } = {}) {
   header[0x01] = cutout ? 1 : 0;        // has see-through texels
   header.writeUInt16BE(image.width, 0x02);
   header.writeUInt16BE(image.height, 0x04);
-  header[0x06] = 1;                     // repeat across
-  header[0x07] = edge ? 0 : 1;          // and down, unless laid once
+  header[0x06] = wrap ? wrap[0] : 1;    // repeat across (GX: 0 clamp, 1 repeat, 2 mirror)
+  header[0x07] = wrap ? wrap[1] : edge ? 0 : 1;  // and down, unless laid once
   header[0x10] = levels.length > 1 ? 1 : 0;
   header[0x14] = levels.length > 1 ? 5 : 1;  // linear between levels, else linear
   header[0x15] = 1;
@@ -412,7 +412,7 @@ function userModelBaked(library, id) {
   const template = stageModelData.materials[plain.index];
   const textures = [], materials = [], shapes = [], position = [], codes = [];
   model.parts.forEach((part, i) => {
-    textures.push({ name: `${id}-${i}`, width: part.texture.width, height: part.texture.height, rgba: part.texture.rgba, wrapS: 1, wrapT: 1, mipmapped: true });
+    textures.push({ name: `${id}-${i}`, width: part.texture.width, height: part.texture.height, rgba: part.texture.rgba, wrapS: part.wrap[0], wrapT: part.wrap[1], mipmapped: true });
     // its own coordinates as they are: the stage material's matrix (often moved or turned) left out
     const material = { ...template, textures: [i, ...template.textures.slice(1).map(() => -1)], texMatrices: plainTexMatrices(template) };
     if (part.cutout) material.alphaTest = { comp0: 6, ref0: 128, op: 0, comp1: 3, ref1: 255 };
@@ -423,10 +423,8 @@ function userModelBaked(library, id) {
       for (let k = 0; k < 3; k++) color[v * 4 + k] = light[k] / 255 * part.color[v * 4 + k] / 255;
       color[v * 4 + 3] = part.color[v * 4 + 3] / 255;
     }
-    // J3D's fronts are clockwise.
-    const index = new Uint32Array(part.index.length);
-    for (let t = 0; t < index.length; t += 3) { index[t] = part.index[t]; index[t + 1] = part.index[t + 2]; index[t + 2] = part.index[t + 1]; }
-    shapes.push({ position: part.position, normal: part.normal, uv: part.uv, uv1: part.uv, color, drawIndex: new Uint16Array(count), index,
+    // Counter-clockwise, as models come out of the file reader (j3d.js) and as the editor draws them.
+    shapes.push({ position: part.position, normal: part.normal, uv: part.uv, uv1: part.uv, color, drawIndex: new Uint16Array(count), index: part.index,
       hasColor: true, hasNormal: true, hasUv: true, hasUv1: false, material: i });
     for (let t = 0; t < part.index.length; t++) for (let k = 0; k < 3; k++) position.push(part.position[part.index[t] * 3 + k]);
     for (let t = 0; t < part.index.length / 3; t++) codes.push(0);
@@ -813,7 +811,7 @@ function addUserModel(edit, piece, project, { plain, model, addFaces, textures }
   const decoded = userModels.decodeModel(stored), scale = texScale(model.materials[plain.index]), uv = untexAffine(model.materials[plain.index]);
   decoded.parts.forEach((part, i) => {
     const key = `${stored.id}:${i}`;
-    if (!textures.has(key)) textures.set(key, edit.addTexture(userBti(part.texture, { cutout: part.cutout }), 0, `${stored.id}-${i}`));
+    if (!textures.has(key)) textures.set(key, edit.addTexture(userBti(part.texture, { cutout: part.cutout, wrap: part.wrap }), 0, `${stored.id}-${i}`));
     const look = { material: edit.cloneMaterial(plain.index, { texture: textures.get(key), cutout: part.cutout }), factor: [1 / scale[0], 1 / scale[1]], uv };
     addFaces(userModelFaces(part, piece), look, (face, k) => {
       if (part.unlit) return face.color[k].slice(0, 4);  // its light is in its texture already
