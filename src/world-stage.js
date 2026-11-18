@@ -618,9 +618,12 @@ const hasStageEdits = project => project.blank || Object.keys(project.texturePai
 // A stage model holds at most 65,536 of each kind of corner (16-bit indexes), and so does
 // its ground. Big models go into model files of their own instead, each with its own
 // limits, shown by the game's TMapStaticObj (Map/MapStaticObject.cpp): it loads
-// /scene/map/map/<name>.bmd, and <name>.col as ground set where it stands, for these
-// names of its table, ones no stage of the game uses beyond its own and with nothing
-// special done for them. One model a name, placed as many times as wanted.
+// /scene/map/map/<name>.bmd for these names of its table, ones no stage of the game uses
+// beyond its own and with nothing special done for them. One model a name, placed as many
+// times as wanted. Their ground stays in the stage's: an object's own ground of 350 corners
+// or more is used where its file has it, not where the object stands
+// (TMapCollisionStatic::setUp), so the names whose table entry loads <name>.col (`ground`)
+// get one small triangle far below everything, for the game to find a file.
 const SEPARATE_SLOTS = [
   { name: 'mareSeaPollutionS0', ground: true },
   { name: 'mareSeaPollutionS12', ground: true },
@@ -650,18 +653,15 @@ function staticObjName(data) {
   for (let i = 0; i < lights && i < 64; i++) { at += 4; if (skip() === null) return null; }
   return skip();
 }
-// The level's models in files of their own: [{ model, slot, pieces }], the solid ones on the
-// names with ground first; models past the free names go into the stage model as usual.
+// The level's models in files of their own: [{ model, slot, pieces }]; models past the free
+// names go into the stage model as usual.
 function separateModels(library, project) {
   const wanted = (project.models || []).filter(m => m.separate && (project.pieces || []).some(p => p.kind === 'model' && p.ref === m.id));
   if (!wanted.length) return [];
   const free = freeSlots(library, project.base), out = [];
-  const solidOf = m => (project.pieces || []).some(p => p.kind === 'model' && p.ref === m.id && p.solid);
-  for (const model of [...wanted].sort((a, b) => solidOf(b) - solidOf(a))) {
-    const at = free.findIndex(slot => slot.ground === solidOf(model)) >= 0 ? free.findIndex(slot => slot.ground === solidOf(model)) : 0;
+  for (const model of wanted) {
     if (!free.length) break;
-    const [slot] = free.splice(at, 1);
-    out.push({ model, slot, pieces: project.pieces.filter(p => p.kind === 'model' && p.ref === model.id) });
+    out.push({ model, slot: free.shift(), pieces: project.pieces.filter(p => p.kind === 'model' && p.ref === model.id) });
   }
   return out;
 }
@@ -825,29 +825,17 @@ function buildSeparate(library, project, SURFACES) {
   for (const { model, slot, pieces } of separateModels(library, project)) {
     const stats = {};
     const bmd = buildMap(library, project, { only: model.id, stats });
-    let col = null;
-    const solid = pieces.find(p => p.solid);
-    if (slot.ground && solid) {
-      const add = [], stone = codeOf('stone'), piece = { position: [0, 0, 0], yaw: 0, scale: 1 };
-      for (const part of userModels.decodeModel(model).parts)
-        for (const face of userModelFaces(part, piece)) add.push({ p: face.p, code: build.isFloor(face.n) ? codeOf(solid.ground) : stone });
-      col = add.length ? collisionFile.compose(null, { add }) : null;
-    }
-    out.push({ model, slot, pieces, bmd, col, stats, groundCorners: col ? col.readUInt32BE(0) : 0 });
+    // the file the game looks for: one small floor far below everything, set where each copy stands
+    const col = slot.ground ? collisionFile.compose(null, { add: [{ p: [[0, -200000, 0], [0, -200000, 50], [50, -200000, 0]], code: codeOf('stone') }] }) : null;
+    out.push({ model, slot, pieces, bmd, col, stats, groundCorners: 0 });
   }
   return out;
 }
-// Each copy's ground where it stands, as the game sets it (for the ground's pools).
+// Each copy's ground of its own where it stands, as the game sets it (for the ground's pools): the
+// small floor far below, one triangle a copy.
 function separateGround(separate) {
   const out = [];
-  for (const { model, col, pieces } of separate) {
-    if (!col) continue;
-    for (const piece of pieces) {
-      const add = [];
-      for (const part of userModels.decodeModel(model).parts) for (const face of userModelFaces(part, piece)) add.push({ p: face.p, code: 0 });
-      if (add.length) out.push(collisionFile.compose(null, { add }));
-    }
-  }
+  for (const { col, pieces } of separate) if (col) for (let i = 0; i < pieces.length; i++) out.push(col);
   return out;
 }
 
@@ -962,7 +950,7 @@ function buildGround(library, project, surfaces, defaults) {
   if (!col && !project.blank && !(project.pieces || []).length) throw new Error('This stage has no ground file.');
   const add = [];
   const codeOf = id => { const s = surfaces.find(x => x.id === id) || surfaces[0]; return s.type * 256 + s.sound; };
-  const stone = codeOf('stone'), apart = separateIds(library, project);
+  const stone = codeOf('stone');
   for (const piece of project.pieces || []) {
     if (piece.kind === 'prefab') {
       const parsed = parsePrefabRef(piece.ref);
@@ -980,7 +968,8 @@ function buildGround(library, project, surfaces, defaults) {
       continue;
     }
     if (piece.kind === 'model') {
-      const stored = piece.solid && !apart.has(piece.ref) && (project.models || []).find(m => m.id === piece.ref);
+      // models in files of their own too: their ground stays the stage's (SEPARATE_SLOTS)
+      const stored = piece.solid && (project.models || []).find(m => m.id === piece.ref);
       if (!stored) continue;
       for (const part of userModels.decodeModel(stored).parts)
         for (const face of userModelFaces(part, piece)) add.push({ p: face.p, code: build.isFloor(face.n) ? codeOf(piece.ground) : stone });

@@ -1021,7 +1021,7 @@ function renderInspector() {
     ground.disabled = object.piece.solid === false;
     const model = project.models.find(m => m.id === object.piece.ref);
     $('world-model-separate').checked = Boolean(model?.separate);
-    $('world-model-separate-note').textContent = model?.separate ? 'Every copy of this model is in its own file, solid and with footsteps as the first copy has them.' : '';
+    $('world-model-separate-note').textContent = model?.separate ? 'Every copy of this model is drawn from its own file. Its ground, when solid, is still in the stage\'s ground.' : '';
     $('world-model-separate-note').hidden = !model?.separate;
   }
   $('world-rot-x').disabled = $('world-rot-z').disabled = Boolean(object.piece);

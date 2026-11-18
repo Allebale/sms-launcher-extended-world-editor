@@ -500,12 +500,12 @@ test('big models go in files of their own: the names the stage leaves free, show
   // The stage's own MonteRiver stays its own; Noki Bay keeps Mare5ExGate.
   assert.deepEqual(stage.freeSlots(lib, 'monte0').map(x => x.name), ['mareSeaPollutionS0', 'mareSeaPollutionS12', 'BiancoRiver', 'Mare5ExGate']);
   assert.ok(!stage.freeSlots(lib, 'mare0').some(x => x.name === 'Mare5ExGate'));
-  // Solid models take the names with ground first; past the free names, the stage model as usual.
+  // One name a model, in order; past the free names, the stage model as usual.
   const models = ['a', 'b', 'c', 'd', 'e', 'f'].map((id, i) => ({ id: `model-00000000000${id}`, label: id, separate: true, solid: i < 2 }));
   const pieces = models.map((m, i) => ({ kind: 'model', ref: m.id, position: [i, 0, 0], yaw: 0, scale: 1, solid: m.solid }));
   const chosen = stage.separateModels(lib, { base: 'monte0', models, pieces });
   assert.equal(chosen.length, 4);
-  assert.deepEqual(chosen.filter(c => c.slot.ground).map(c => c.model.label).sort(), ['a', 'b']);
+  assert.deepEqual(chosen.map(c => c.model.label), ['a', 'b', 'c', 'd']);
 });
 
 test('the stage model\'s vertex arrays can be counted and emptied, with positions turned to floats', { skip: !process.env.SMS_TEST_DISC || !fs.existsSync(process.env.SMS_TEST_DISC) }, () => {
