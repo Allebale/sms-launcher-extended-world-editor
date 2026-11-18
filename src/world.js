@@ -1422,7 +1422,7 @@ function buildArchive(library, project) {
 const LIMIT = 0x10000;
 function levelBudget(library, project) {
   const pick = usage => ({ positions: usage[9] || 0, normals: usage[10] || 0, colors: usage[11] || 0, uvs: usage[13] || 0 });
-  const out = { limit: LIMIT, model: null, ground: 0, separate: [], waiting: [], slots: 0, error: null };
+  const out = { limit: LIMIT, groundLimit: collisionFile.MAX_CORNERS, model: null, ground: 0, separate: [], waiting: [], slots: 0, error: null };
   try {
     const stats = {};
     if (!stage.buildMap(library, project, { stats })) {

@@ -577,3 +577,10 @@ test('OBJ models come in as a binary glTF: faces fanned, v counted from the top,
   assert.equal(mapFile(['-clamp', 'on', 'my', 'pic.png']), 'my pic.png');
   assert.throws(() => objToGlb('v 0 0 0', () => null), /no faces/);
 });
+
+test('the stage\'s ground stops at the 32,767 corners the game reads', () => {
+  const collisionFile = require('../src/collision');
+  const strip = n => Array.from({ length: n }, (_, i) => ({ p: [[i * 10, 0, 0], [i * 10 + 5, 0, 0], [i * 10, 0, 5]], code: 0 }));
+  assert.ok(collisionFile.compose(null, { add: strip(10922) }));  // 32,766 corners
+  assert.throws(() => collisionFile.compose(null, { add: strip(10923) }), /32,767/);
+});

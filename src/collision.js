@@ -9,7 +9,7 @@
 // s16 value), u16 0xffff, then offsets to its triangles' vertex indexes (3 x
 // u16 each), two per-triangle bytes, and the per-triangle values.
 
-const MAX_GROUP = 0x7fff;
+const MAX_GROUP = 0x7fff, MAX_CORNERS = 0x7fff;
 
 function readGroups(buffer) {
   const vertexCount = buffer.readUInt32BE(0), vertexAt = buffer.readUInt32BE(4);
@@ -112,7 +112,9 @@ function compose(buffer, { changes = {}, defaults = {}, clear = false, keep = ()
     chunks.push(bytes);
     vertexCount += extra.length / 3;
   }
-  if (vertexCount > 0xffff) throw new Error('The stage has too much ground for the game to hold. Remove some built pieces.');
+  // The game reads the corner numbers as signed 16-bit (TMapCollisionBase::setCheckData): past
+  // 32,767 a triangle takes its corners from outside the list, and the stage crashes as it loads.
+  if (vertexCount > MAX_CORNERS) throw new Error(`The stage's ground has ${vertexCount.toLocaleString()} corners, more than the ${MAX_CORNERS.toLocaleString()} the game can hold: make solid models simpler, or untick Solid on models Mario doesn't need to stand on.`);
   return write(Buffer.concat(chunks), vertexCount, list);
 }
 
@@ -163,4 +165,4 @@ function write(vertices, vertexCount, list) {
   return out;
 }
 
-module.exports = { parse, paint, compose, triangles, surfaceCode };
+module.exports = { parse, paint, compose, triangles, surfaceCode, MAX_CORNERS };

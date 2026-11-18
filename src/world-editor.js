@@ -309,8 +309,7 @@ async function refreshBudget() {
 function renderBudget(budget) {
   const rows = $('world-budget-rows');
   rows.replaceChildren();
-  const limit = budget.limit || 65536;
-  const row = (label, used, detail) => {
+  const row = (label, used, detail, limit = budget.limit || 65536) => {
     const share = used / limit, item = document.createElement('div');
     item.className = `world-budget-row${share > 1 ? ' over' : share > 0.85 ? ' warn' : ''}`;
     const head = document.createElement('div'), name = document.createElement('span'), value = document.createElement('span');
@@ -328,10 +327,10 @@ function renderBudget(budget) {
   const corners = m => Math.max(m.positions, m.normals, m.colors, m.uvs);
   const detail = m => `Positions ${m.positions.toLocaleString()} · normals ${m.normals.toLocaleString()} · colours ${m.colors.toLocaleString()} · texture coordinates ${m.uvs.toLocaleString()}`;
   if (budget.model) row('Stage model corners', corners(budget.model), detail(budget.model));
-  if (budget.ground !== undefined) row('Ground corners', budget.ground || 0);
+  if (budget.ground !== undefined) row('Ground corners', budget.ground || 0, '', budget.groundLimit || 32767);
   for (const own of budget.separate || []) {
     row(`${own.label} (own file)`, corners(own), detail(own));
-    if (own.ground) row(`${own.label} ground (own file)`, own.ground);
+    if (own.ground) row(`${own.label} ground (own file)`, own.ground, '', budget.groundLimit || 32767);
   }
   const notes = [];
   if (budget.slots !== undefined) notes.push(`${(budget.separate || []).length} of ${budget.slots} own model files used on this stage.`);
