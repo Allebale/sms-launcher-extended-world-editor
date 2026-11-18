@@ -22,7 +22,8 @@
       "World editor: a Sun setting turns the stage's sun to morning, noon, 3 pm or evening.",
       "World editor: levels can hold hanging wires for Mario to grab, drawn in the editor and made by the game.",
       "World editor: plain levels and emptied stages built on Bianco Hills no longer crash as they load.",
-    "World editor: premade level files can place coins, Shines, enemies and more by name, found on your own disc when you import them."
+      "World editor: premade level files can place coins, Shines, enemies and more by name, found on your own disc when you import them.",
+      "World editor: in plain levels Mario can fall off edges and down holes again, instead of being stopped by an invisible wall."
     ],
     "game": [
       "Split-screen co-op: jumping while carrying the other player no longer pushes you sideways.",

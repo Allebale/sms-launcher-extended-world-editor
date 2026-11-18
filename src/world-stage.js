@@ -1003,6 +1003,10 @@ function buildGround(library, project, surfaces, defaults) {
     for (const { p } of add) for (const [, y] of p) low = Math.min(low, y - 2000);
     const w = 65000, death = 0x0800 * 256;  // the death plane's type, as the stages have it
     add.push({ p: [[-w, low, -w], [w, low, w], [w, low, -w]], code: death }, { p: [[-w, low, -w], [-w, low, w], [w, low, w]], code: death });
+    // Mario passes through a death plane and the game looks for ground under it (TMario::checkGroundPlane):
+    // with none, the place counts as out of bounds and holds him back like a wall. A floor below it.
+    const under = low - 1000;
+    add.push({ p: [[-w, under, -w], [w, under, w], [w, under, -w]], code: 0 }, { p: [[-w, under, -w], [-w, under, w], [w, under, w]], code: 0 });
   }
   if (!project.blank && !add.length) return Object.keys(project.paint || {}).length ? collisionFile.paint(col, project.paint, defaults) : null;
   return collisionFile.compose(col || null, { changes: project.paint || {}, defaults, clear: project.blank, keep: project.plain ? keepsOnPlain : keepsOnEmpty, add });

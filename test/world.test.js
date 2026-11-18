@@ -500,6 +500,11 @@ test('a plain level has no sea, only a floor far below that ends a fall', () => 
   assert.equal(deaths.length, 2);
   // below the lowest built ground, by 2,000
   assert.ok(ground.position[deaths[0] * 9 + 1] <= -2500 - 100 + 1);
+  // and ordinary ground under it: Mario passes through a death plane, and without ground below it's out of bounds
+  const deathY = ground.position[deaths[0] * 9 + 1];
+  const under = [...ground.codes.keys()].filter(i => ground.codes[i] === 0 && ground.position[i * 9 + 1] < deathY);
+  assert.equal(under.length, 2);
+  assert.equal(ground.position[under[0] * 9 + 1], deathY - 1000);
 });
 
 test('big models go in files of their own: the names the stage leaves free, shown by MapStaticObj objects where each copy stands', () => {
