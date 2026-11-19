@@ -646,10 +646,11 @@ test('a premade level\'s things named by kind are found in the catalog', () => {
     { key: 'HamuKuri:x', type: 'HamuKuri', label: 'Strollin\' Stu', category: 'enemies', source: { scene: 'dolpic0', id: '6/2/7/0' }, model: null, scale: [1, 1, 1] },
   ] };
   const t = { position: [1, 2, 3], rotation: [0, 0, 0], scale: [1, 1, 1] };
-  const out = world.resolvePremade(catalog, { added: [{ key: 'Coin', transform: t }, { type: 'HamuKuri', transform: t }, { key: 'Nothing', transform: t },
+  const out = world.resolvePremade(catalog, { added: [{ key: 'Coin', transform: t, name: 'Snowfall' }, { type: 'HamuKuri', transform: t }, { key: 'Nothing', transform: t },
     { source: { scene: 'bianco0', id: '1' }, transform: t }] });
   assert.equal(out.added.length, 3);
   assert.deepEqual(out.added[0].source, { scene: 'bianco0', id: '6/2/3/1' });
+  assert.equal(out.added[0].name, 'Snowfall');
   assert.equal(out.added[1].key, 'HamuKuri:x');
   assert.deepEqual(out.added[1].transform.position, [1, 2, 3]);
   assert.deepEqual(out.unresolved, ['Nothing']);

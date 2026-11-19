@@ -1228,7 +1228,7 @@ function resolvePremade(catalog, input) {
     if (!item) { missing.add(String(entry?.label || entry?.key || entry?.type || 'something')); return []; }
     return [{ uid: entry.uid, key: item.key, source: item.source, type: item.type, variant: item.variant, label: item.label, category: item.category,
       model: item.model, note: item.note, transform: entry.transform || { position: [0, 0, 0], rotation: [0, 0, 0], scale: [...(item.scale || [1, 1, 1])] },
-      ...entry.exit ? { exit: entry.exit } : {} }];
+      ...entry.exit ? { exit: entry.exit } : {}, ...entry.name ? { name: entry.name } : {} }];
   });
   return { ...input, added, ...(missing.size ? { unresolved: [...missing] } : {}) };
 }
