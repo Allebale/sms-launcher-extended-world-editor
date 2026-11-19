@@ -931,6 +931,10 @@ const COMMON_FOLDERS = { NPCMonteM: ['montemcommon'], NPCMonteW: ['montewcommon'
   // Strollin' Stus and the Dango read their animations from /scene/hamukurianm (THamuKuriManager::createAnmData)
   HamuKuri: ['hamukurianm'], BossDangoHamuKuri: ['hamukurianm'] };
 
+// Files a map object loads by a name of their own, not its model's: the Yoshi egg's balloon showing
+// the fruit it wants (TEggYoshi::initMapObj, "eggYoshi_fukidashi" with its animations).
+const MAPOBJ_EXTRA = { eggyoshi: ['mapobj/eggyoshi_fukidashi'], eggyoshievent: ['mapobj/eggyoshi_fukidashi'] };
+
 // Files a placed object needs from the stage it came from: its model and
 // everything named like it (animations, collision), or its whole folder.
 function resourcesFor(files, modelFile, described) {
@@ -942,7 +946,7 @@ function resourcesFor(files, modelFile, described) {
     for (const file of [].concat(entry.m || [], entry.c || [], entry.a || [], modelFile)) if (files.has(file)) out.add(file);
     // Files named after its model too: its animations, and parts' collision
     // the object loads by name (a tree's leaves, "palmnormalleaf01.col").
-    const stems = [...out].map(file => file.replace(/\.[^./]+$/, ''));
+    const stems = [...out].map(file => file.replace(/\.[^./]+$/, '')).concat(MAPOBJ_EXTRA[variant.toLowerCase()] || []);
     for (const file of files.keys()) if (stems.some(stem => file.startsWith(stem))) out.add(file);
     // The material table its manager loads for its kind (MapObjManager's
     // loadMatTable): without it the game has none to put on it and stops.
@@ -1709,5 +1713,5 @@ function originalPath(tree, file) {
 module.exports = {
   Library, WORLDS, CATEGORIES, SURFACES, GROUND_TYPES, CAMERA_TYPES, CATALOG_VERSION, PROJECT_FORMAT, FLOOR_NORMAL, worldOf, sceneLabel, buildCatalog, loadLevel, cleanProject,
   buildScene, buildCollision, buildModel, buildArchive, stageTable, stageStart, playTexts, setMessages, readTransform, writeTransform, describe, categoryOf, labelOf, humanize, fitManagers,
-  paintNpc, parseNpcLook, NPC_TYPES, retexturable, applyRetextures, growCollisionPools, levelBudget, setSun, applyWires, wireCube, resolvePremade, applyMessages,
+  paintNpc, parseNpcLook, NPC_TYPES, retexturable, applyRetextures, growCollisionPools, levelBudget, setSun, applyWires, wireCube, resolvePremade, applyMessages, resourcesFor,
 };

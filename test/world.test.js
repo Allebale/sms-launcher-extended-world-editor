@@ -717,3 +717,11 @@ test('stage exits lead to a level\'s own levels, named for a mod to find, and an
   assert.equal(door.nameKey, sceneBin.keyCode(Buffer.from('Exit to 2 1', 'latin1')));
   assert.ok(world.SURFACES.some(x => x.id === 'snow' && x.type === 0 && x.sound === 0x05));
 });
+
+test('a Yoshi egg brings its balloon (the fruit it wants) along with its model', () => {
+  const files = new Map(['mapobj/eggyoshi_normal.bmd', 'mapobj/eggyoshi_broken.bmd', 'mapobj/eggyoshi_wait.bck', 'mapobj/eggyoshi_fukidashi.bmd',
+    'mapobj/eggyoshi_fukidashi.btp', 'mapobj/eggyoshi_fukidashi_wait.bck', 'mapobj/fruitbanana.bmd'].map(f => [f, Buffer.alloc(1)]));
+  const got = world.resourcesFor(files, 'mapobj/eggyoshi_normal.bmd', { info: { family: 'mapobj' }, variant: 'eggYoshi' });
+  for (const f of ['mapobj/eggyoshi_fukidashi.bmd', 'mapobj/eggyoshi_fukidashi.btp', 'mapobj/eggyoshi_fukidashi_wait.bck', 'mapobj/eggyoshi_broken.bmd']) assert.ok(got.includes(f), f);
+  assert.ok(!got.includes('mapobj/fruitbanana.bmd'));
+});
