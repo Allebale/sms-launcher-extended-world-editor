@@ -709,5 +709,11 @@ test('stage exits lead to a level\'s own levels, named for a mod to find, and an
   assert.equal(named.added[1].name, undefined);
   const namedTree = world.buildScene(lib, named).tree;
   assert.ok(at(namedTree, '1/0/0').children.some(n => sceneBin.decodeName(n.nameBytes) === 'Snowfall'));
+  // the game finds a name by its key code first: written for the new name, not kept from the copied thing
+  const again = sceneBin.parse(sceneBin.serialize(namedTree));
+  const snowfall = at(again, '1/0/0').children.find(n => sceneBin.decodeName(n.nameBytes) === 'Snowfall');
+  assert.equal(snowfall.nameKey, sceneBin.keyCode(Buffer.from('Snowfall', 'latin1')));
+  const door = at(sceneBin.parse(sceneBin.serialize(tree)), '1/0/0').children.find(n => sceneBin.decodeName(n.nameBytes) === 'Exit to 2 1');
+  assert.equal(door.nameKey, sceneBin.keyCode(Buffer.from('Exit to 2 1', 'latin1')));
   assert.ok(world.SURFACES.some(x => x.id === 'snow' && x.type === 0 && x.sound === 0x05));
 });

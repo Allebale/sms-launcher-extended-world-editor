@@ -1292,12 +1292,12 @@ function buildScene(library, project) {
     if (!source || source.children || classOf(source.type).kind !== 'actor') throw new Error(`Couldn't find ${added.label} on your disc any more.`);
     const node = cloneNode(source);
     writeTransform(node.data, added.transform);
-    if (added.name) node.nameBytes = sceneBin.encodeName(added.name);
+    if (added.name) rename(node, sceneBin.encodeName(added.name));
     if (added.exit && EXITS.has(node.type)) {
       const to = stageStart(library, added.exit.scene);
       if (!to) throw new Error(`A stage exit leads to ${sceneLabel(added.exit.scene)}, which the game has no way into.`);
       node.data.writeUInt32BE(((to.area + 1) << 8 | to.episode) >>> 0, node.data.length - 4);
-      node.nameBytes = sceneBin.encodeName(added.exit.arrive === false ? `Way to ${to.area} ${to.episode}` : exitName(to.area, to.episode));
+      rename(node, sceneBin.encodeName(added.exit.arrive === false ? `Way to ${to.area} ${to.episode}` : exitName(to.area, to.episode)));
     }
     const parentId = added.source.id.split('/').slice(0, -1).join('/');
     const sourceParent = sceneBin.find(sourceTree, parentId);
@@ -1429,7 +1429,7 @@ function addSeparateObjects(library, tree, separate) {
       const name = Buffer.from(slot.name, 'latin1'), length = Buffer.alloc(2);
       length.writeUInt16BE(name.length);
       const node = cloneNode(template.node);
-      node.nameBytes = Buffer.from(`UserModel${++n}`, 'latin1');
+      rename(node, Buffer.from(`UserModel${++n}`, 'latin1'));
       node.data = Buffer.concat([Buffer.from(template.head), length, name]);
       const k = piece.scale || 1;
       writeTransform(node.data, { position: piece.position, rotation: [0, piece.yaw || 0, 0], scale: [k, k, k] });
@@ -1491,6 +1491,13 @@ function growCollisionPools(library, project, tree, col, separate = []) {
   const grow = (current, more) => more > 0 ? current + more + Math.ceil(more / 2) + 2048 : current;
   data.writeInt32BE(grow(triangles, after.triangles - before.triangles), at + 8);
   data.writeInt32BE(grow(lists, after.lists - before.lists), at + 12);
+}
+
+// A new name for a node: its key code (the game looks names up by it first)
+// worked out again from the new name, not the old name's kept from the disc.
+function rename(node, bytes) {
+  node.nameBytes = bytes;
+  delete node.nameKey;
 }
 
 function cloneNode(node) {
