@@ -1183,7 +1183,9 @@ function cleanProject(input, scenes, nested = false) {
       type: text(entry.type, 80), variant: text(entry.variant, 80), label: text(entry.label), category: text(entry.category, 40),
       model: entry.model ? text(entry.model, 300) : null, note: text(entry.note, 400), transform: cleanTransform(entry.transform),
       // a stage exit: the level (a stage of the disc) it leads to
-      ...EXITS.has(text(entry.type, 80)) && entry.exit && scenes.includes(entry.exit.scene) ? { exit: { scene: entry.exit.scene } } : {},
+      // (arrive false: Mario coming the other way starts at the stage's start, not beside it, as where a
+      // level is entered from another isn't always its way out)
+      ...EXITS.has(text(entry.type, 80)) && entry.exit && scenes.includes(entry.exit.scene) ? { exit: { scene: entry.exit.scene, ...entry.exit.arrive === false ? { arrive: false } : {} } } : {},
     };
   });
   const paint = {};
@@ -1291,7 +1293,7 @@ function buildScene(library, project) {
       const to = stageStart(library, added.exit.scene);
       if (!to) throw new Error(`A stage exit leads to ${sceneLabel(added.exit.scene)}, which the game has no way into.`);
       node.data.writeUInt32BE(((to.area + 1) << 8 | to.episode) >>> 0, node.data.length - 4);
-      node.nameBytes = sceneBin.encodeName(exitName(to.area, to.episode));
+      node.nameBytes = sceneBin.encodeName(added.exit.arrive === false ? `Way to ${to.area} ${to.episode}` : exitName(to.area, to.episode));
     }
     const parentId = added.source.id.split('/').slice(0, -1).join('/');
     const sourceParent = sceneBin.find(sourceTree, parentId);

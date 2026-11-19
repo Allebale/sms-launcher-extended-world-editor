@@ -684,6 +684,7 @@ test('stage exits lead to a level\'s own levels, named for a mod to find, and an
   const lib = { sceneTree: scene => trees[scene], files: () => files, scenes: () => ['home', 'away'], context: scene => ({ files, tree: trees[scene], charas: new Map() }),
     stageTableCache: [[], [], ['home', 'away']] };
   const exit = { uid: 'e', key: 'MapObjChangeStage', type: 'MapObjChangeStage', label: 'Stage exit', source: { scene: 'away', id: '1/0/0/0' }, transform: t([7, 0, 7]), exit: { scene: 'away' } };
+  assert.deepEqual(world.cleanProject({ format: 'sms-world', base: 'home', added: [{ ...exit, exit: { scene: 'away', arrive: false } }] }, ['home', 'away']).added[0].exit, { scene: 'away', arrive: false });
   const level = world.cleanProject({ format: 'sms-world', name: 'Main', base: 'home', added: [exit],
     sublevels: [{ format: 'sms-world', name: 'Sub', base: 'away', emptyAll: true, start: { position: [10, 20, 30], yaw: 90 } }] }, ['home', 'away']);
   assert.deepEqual(level.added[0].exit, { scene: 'away' });
