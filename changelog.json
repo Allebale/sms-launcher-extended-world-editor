@@ -27,7 +27,8 @@
       "World editor: level files can give the stage's Piantas and other characters their own lines to say.",
       "Building a game version no longer stops with \"operation not permitted\" when Windows still holds the fresh download for a moment.",
       "World editor: level files can bring files of their own into the stage, such as a character's model or settings.",
-      "World editor: a Dango placed in another stage now stacks its balls and moves, with its manager and animations brought along."
+      "World editor: a Dango placed in another stage now stacks its balls and moves, with its manager and animations brought along.",
+      "World editor: a level file can bring levels of its own, each built on another stage, with stage exits that lead into them; Play in game takes them all along."
     ],
     "game": [
       "Split-screen co-op: jumping while carrying the other player no longer pushes you sideways.",

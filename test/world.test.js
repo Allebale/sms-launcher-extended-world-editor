@@ -673,3 +673,32 @@ test('a level\'s own files keep only safe paths and stay out of the editor\'s ow
     'map/scene.bin': b64, '../evil': b64, 'Hamukuri/X.bmd': b64, 'hamukuri/bad': 'not base64!' } }, ['bianco0']);
   assert.deepEqual(Object.keys(p.files), ['hamukuri/head.bmd', 'map/params/enemy/bossdangohamukuri.prm']);
 });
+
+test('stage exits lead to a level\'s own levels, named for a mod to find, and an emptied level keeps only Mario where it says', () => {
+  const exitStage = () => stage(
+    [node('MapObjManager', '地形オブジェマネージャー', managerData('mapobj', 4))],
+    [actor('MapObjChangeStage', 'exit', [0, 0, 0], Buffer.concat([str('ChangeStage'), u32(0x1234)])),
+      actor('Mario', 'mario', [1, 2, 3]), actor('Palm', 'palm 0', [5, 0, 5], str('palmNormal'))]);
+  const trees = { home: exitStage(), away: exitStage() };
+  const files = new Map([['mapobj/palmnormal.bmd', Buffer.alloc(1)], ['mapobj/palmnormal.col', Buffer.alloc(1)]]);
+  const lib = { sceneTree: scene => trees[scene], files: () => files, scenes: () => ['home', 'away'], context: scene => ({ files, tree: trees[scene], charas: new Map() }),
+    stageTableCache: [[], [], ['home', 'away']] };
+  const exit = { uid: 'e', key: 'MapObjChangeStage', type: 'MapObjChangeStage', label: 'Stage exit', source: { scene: 'away', id: '1/0/0/0' }, transform: t([7, 0, 7]), exit: { scene: 'away' } };
+  const level = world.cleanProject({ format: 'sms-world', name: 'Main', base: 'home', added: [exit],
+    sublevels: [{ format: 'sms-world', name: 'Sub', base: 'away', emptyAll: true, start: { position: [10, 20, 30], yaw: 90 } }] }, ['home', 'away']);
+  assert.deepEqual(level.added[0].exit, { scene: 'away' });
+  assert.equal(level.sublevels[0].emptyAll, true);
+  const { tree } = world.buildScene(lib, level);
+  const built = at(tree, '1/0/0').children.find(n => n.type === 'MapObjChangeStage' && sceneBin.decodeName(n.nameBytes).startsWith('Exit'));
+  assert.equal(sceneBin.decodeName(built.nameBytes), 'Exit to 2 1');
+  assert.equal(built.data.readUInt32BE(built.data.length - 4), (3 << 8) | 1);
+  const sub = world.buildScene(lib, level.sublevels[0]).tree;
+  const left = at(sub, '1/0/0').children.map(n => n.type);
+  assert.ok(left.includes('Mario') && !left.includes('Palm') && !left.includes('MapObjChangeStage'));
+  const mario = at(sub, '1/0/0').children.find(n => n.type === 'Mario');
+  assert.deepEqual(world.readTransform(mario.data).position, [10, 20, 30]);
+  // each on a stage of its own; an exit only on a stage exit
+  assert.throws(() => world.cleanProject({ format: 'sms-world', base: 'home', sublevels: [{ format: 'sms-world', base: 'home' }] }, ['home', 'away']), /stage of its own/);
+  const coin = world.cleanProject({ format: 'sms-world', base: 'home', added: [{ ...exit, type: 'Coin', exit: { scene: 'away' } }] }, ['home', 'away']);
+  assert.equal(coin.added[0].exit, undefined);
+});

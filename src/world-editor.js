@@ -996,7 +996,7 @@ function renderInspector() {
     const wireCount = (project.wires || []).length;
     $('world-wires-info').hidden = !wireCount;
     $('world-wires-info').textContent = `${wireCount} hanging wire${wireCount === 1 ? '' : 's'} for Mario to grab (from the level file), drawn as dark lines.`;
-    if (level) $('world-level-info').textContent = `${sceneLabel(project.base)}${project.blank ? ' (emptied)' : ''} · ${level.objects.filter(o => o.transform).length} objects from the disc · ${project.added.length} added · ${Object.keys(project.edits).length} edited · ${project.pieces.length} pieces built or copied · ${Object.keys(project.texturePaint).length} faces retextured · ${Object.keys(project.paint).length} ground triangles painted`;
+    if (level) $('world-level-info').textContent = `${sceneLabel(project.base)}${project.blank ? ' (emptied)' : ''} · ${level.objects.filter(o => o.transform).length} objects from the disc · ${project.added.length} added · ${Object.keys(project.edits).length} edited · ${project.pieces.length} pieces built or copied · ${Object.keys(project.texturePaint).length} faces retextured · ${Object.keys(project.paint).length} ground triangles painted${(project.sublevels || []).length ? ` · its own levels, played with it (edit them in their level file): ${project.sublevels.map(sub => `${sub.name} on ${sceneLabel(sub.base)}`).join(', ')}` : ''}`;
     return;
   }
   $('world-inspector-title').textContent = object.label;

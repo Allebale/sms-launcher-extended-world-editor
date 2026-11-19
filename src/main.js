@@ -1590,6 +1590,8 @@ async function worldOpen(file) {
 }
 // Things a premade level names by kind, found on this disc (world.resolvePremade).
 async function worldPremade(input) {
+  // its own levels too
+  if (Array.isArray(input?.sublevels)) input = { ...input, sublevels: await Promise.all(input.sublevels.map(sub => worldPremade(sub))) };
   if (!Array.isArray(input?.added) || input.added.every(entry => entry?.source?.scene && (entry.label || entry.model))) return input;
   const resolved = world.resolvePremade(await worldCatalog(), input);
   if (resolved.unresolved) log(`World editor: this level places things this disc doesn't have, left out: ${resolved.unresolved.join(', ')}.`);
@@ -1676,6 +1678,11 @@ async function worldPlay(input) {
   fs.mkdirSync(path.dirname(sceneFile), { recursive: true });
   fs.mkdirSync(card, { recursive: true });
   fs.writeFileSync(sceneFile, world.buildArchive(library, project).data);
+  // its own levels, that its stage exits lead to: each in place of the stage it's built on
+  for (const sub of project.sublevels || []) {
+    if (!world.stageStart(library, sub.base)) throw new Error(`The game has no way into ${world.sceneLabel(sub.base)}, which ${sub.name} is built on.`);
+    fs.writeFileSync(path.join(folder, 'files', 'data', 'scene', `${sub.base}.szs`), world.buildArchive(library, sub).data);
+  }
   // The title card and pause menu name the level, not the stage it's built on:
   // a folder named after common.szs puts these files inside it.
   for (const [file, data] of Object.entries(world.playTexts(library, project, start))) {
@@ -1683,7 +1690,7 @@ async function worldPlay(input) {
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, data);
   }
-  log(`World editor: playing ${project.name} in ${world.sceneLabel(project.base)} (area ${start.area}, episode ${start.episode}).`);
+  log(`World editor: playing ${project.name} in ${world.sceneLabel(project.base)} (area ${start.area}, episode ${start.episode})${(project.sublevels || []).length ? `, with ${project.sublevels.map(sub => `${sub.name} in ${world.sceneLabel(sub.base)}`).join(' and ')}` : ''}.`);
   // A game with ext/warp starts in the level straight away, behind a black
   // screen, as a multiplayer guest joins; older ones go through the title and
   // file select by presses.

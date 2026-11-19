@@ -1165,7 +1165,7 @@ function cleanTransform(t) {
 }
 
 // A project as the renderer or a file gave it, checked and trimmed to what it may hold.
-function cleanProject(input, scenes) {
+function cleanProject(input, scenes, nested = false) {
   if (!input || typeof input !== 'object') throw new Error('This isn\'t a level file.');
   if (input.format !== PROJECT_FORMAT) throw new Error('This isn\'t a level file from the world editor.');
   if (!scenes.includes(input.base)) throw new Error(`This level is built on ${input.base || 'a stage'}, which isn't on your disc.`);
@@ -1182,15 +1182,25 @@ function cleanProject(input, scenes) {
       uid: text(entry.uid, 80), key: text(entry.key), source: { scene: entry.source.scene, id: String(entry.source.id) },
       type: text(entry.type, 80), variant: text(entry.variant, 80), label: text(entry.label), category: text(entry.category, 40),
       model: entry.model ? text(entry.model, 300) : null, note: text(entry.note, 400), transform: cleanTransform(entry.transform),
+      // a stage exit: the level (a stage of the disc) it leads to
+      ...EXITS.has(text(entry.type, 80)) && entry.exit && scenes.includes(entry.exit.scene) ? { exit: { scene: entry.exit.scene } } : {},
     };
   });
   const paint = {};
   for (const [triangle, code] of Object.entries(input.paint || {}))
     if (/^\d{1,7}$/.test(triangle) && Number.isInteger(code) && code >= 0 && code <= 0xffffff) paint[triangle] = code;
+  // Mario's start set without his object's place in the stage (a level made outside the editor), and
+  // every object of the stage left out but him, as a plain level does (emptyAll)
+  const start = input.start && finite3(input.start.position) && Number.isFinite(input.start.yaw) ? { position: [...input.start.position], yaw: input.start.yaw } : undefined;
+  // Levels of its own that its stage exits lead to: each built on another stage, played and exported with it
+  const sublevels = nested ? [] : (Array.isArray(input.sublevels) ? input.sublevels : []).slice(0, SUBLEVELS_MAX).map(sub => cleanProject(sub, scenes, true));
+  const bases = [input.base, ...sublevels.map(sub => sub.base)];
+  if (new Set(bases).size !== bases.length) throw new Error('Each of a level\'s own levels must be built on a stage of its own.');
   return {
     format: PROJECT_FORMAT, version: 1, name: String(input.name || 'Untitled level').slice(0, 60), base: input.base,
     disc: String(input.disc || '').slice(0, 6), stamp: /^[0-9a-f]{16}$/.test(input.stamp) ? input.stamp : undefined,
-    edits, added, paint, ...stage.cleanStage(input, scenes), savedAt: new Date().toISOString(),
+    edits, added, paint, ...stage.cleanStage(input, scenes), ...start ? { start } : {}, ...input.emptyAll ? { emptyAll: true } : {},
+    ...sublevels.length ? { sublevels } : {}, savedAt: new Date().toISOString(),
   };
 }
 
@@ -1212,7 +1222,8 @@ function resolvePremade(catalog, input) {
     const item = byKey.get(String(entry?.key || '')) || byType.get(String(entry?.type || entry?.key || ''));
     if (!item) { missing.add(String(entry?.label || entry?.key || entry?.type || 'something')); return []; }
     return [{ uid: entry.uid, key: item.key, source: item.source, type: item.type, variant: item.variant, label: item.label, category: item.category,
-      model: item.model, note: item.note, transform: entry.transform || { position: [0, 0, 0], rotation: [0, 0, 0], scale: [...(item.scale || [1, 1, 1])] } }];
+      model: item.model, note: item.note, transform: entry.transform || { position: [0, 0, 0], rotation: [0, 0, 0], scale: [...(item.scale || [1, 1, 1])] },
+      ...entry.exit ? { exit: entry.exit } : {} }];
   });
   return { ...input, added, ...(missing.size ? { unresolved: [...missing] } : {}) };
 }
@@ -1221,6 +1232,12 @@ function resolvePremade(catalog, input) {
 // stack of Strollin' Stus) makes the balls on top of it with the Dango balls' manager
 // (TBossDangoHamuKuri::generateBody), and without it stands alone.
 const COMPANION_MANAGERS = { BossDangoHamuKuri: ['だんごハムクリマネージャー'] };
+// Stage exits (TMapObjChangeStage: touched, or ground-pounded onto) and the level each leads to: its
+// last word the game's (area + 1) << 8 | episode. Each is named "Exit to <area> <episode>", so a mod
+// can find the exit Mario came back through.
+const EXITS = new Set(['MapObjChangeStage', 'MapObjChangeStageHipDrop']);
+const SUBLEVELS_MAX = 4;
+const exitName = (area, episode) => `Exit to ${area} ${episode}`;
 const GOOP_EVENTS = new Set(['MapEventSinkInPollution', 'MapEventSinkInPollutionReset', 'MapEventSinkBianco']);
 function removeWhere(tree, test) {
   const go = node => { if (node.children) node.children = node.children.filter(child => { if (test(child)) return false; go(child); return true; }); };
@@ -1250,6 +1267,16 @@ function buildScene(library, project) {
   // others): they'd crash, and there's nothing left for them to sink. TMarDirector looks for them by
   // name and goes on without them.
   if (project.blank) removeWhere(tree, node => !node.children && GOOP_EVENTS.has(node.type));
+  if (project.emptyAll) removeWhere(tree, node => {
+    if (node.children || node.type === 'Mario') return false;
+    const described = describe(node);
+    return described.info.kind === 'actor' && Boolean(readTransform(node.data)) && Boolean(categoryOf(node.type, described.variant, described.info));
+  });
+  if (project.start) {
+    const marioId = findId(tree, node => !node.children && node.type === 'Mario');
+    const mario = marioId !== null ? sceneBin.find(tree, marioId) : null;
+    if (mario) writeTransform(mario.data, { position: project.start.position, rotation: [0, project.start.yaw, 0], scale: [1, 1, 1] });
+  }
   const needs = new Map();  // scene -> Set of files to copy
   for (const added of project.added) {
     const bound = worldBound(added);
@@ -1260,6 +1287,12 @@ function buildScene(library, project) {
     if (!source || source.children || classOf(source.type).kind !== 'actor') throw new Error(`Couldn't find ${added.label} on your disc any more.`);
     const node = cloneNode(source);
     writeTransform(node.data, added.transform);
+    if (added.exit && EXITS.has(node.type)) {
+      const to = stageStart(library, added.exit.scene);
+      if (!to) throw new Error(`A stage exit leads to ${sceneLabel(added.exit.scene)}, which the game has no way into.`);
+      node.data.writeUInt32BE(((to.area + 1) << 8 | to.episode) >>> 0, node.data.length - 4);
+      node.nameBytes = sceneBin.encodeName(exitName(to.area, to.episode));
+    }
     const parentId = added.source.id.split('/').slice(0, -1).join('/');
     const sourceParent = sceneBin.find(sourceTree, parentId);
     const parent = findGroup(tree, sourceParent) || findGroup(tree, null);
