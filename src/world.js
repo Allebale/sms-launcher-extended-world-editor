@@ -127,6 +127,7 @@ const SURFACES = [
   { id: 'wood', label: 'Wood', detail: 'Ordinary ground with wooden footsteps.', color: '#b07a43', type: 0x0000, sound: 0x07 },
   { id: 'metal', label: 'Metal', detail: 'Ordinary ground with metal footsteps.', color: '#8ea1ad', type: 0x0000, sound: 0x0d },
   { id: 'sand', label: 'Sand', detail: 'Leaves footprints; Mario sinks in for a moment after a big fall.', color: '#ecd27c', type: 0x0701, sound: 0x05 },
+  { id: 'snow', label: 'Snow', detail: 'Ordinary ground with soft, crunchy footsteps (sand\'s, without its footprints).', color: '#f2f6fb', type: 0x0000, sound: 0x05 },
   { id: 'wet', label: 'Wet ground', detail: 'Splashy footsteps and ripples, slippery on slopes.', color: '#43aecb', type: 0x0004, sound: 0x00 },
   { id: 'slippery', label: 'Slippery', detail: 'Mario always slides and can\'t grab ledges.', color: '#bfe8f7', type: 0x0001, sound: 0x02 },
   { id: 'slide', label: 'Slide', detail: 'Slides like the secret courses\' slides.', color: '#6aa9ff', type: 0x000c, sound: 0x02 },
@@ -1182,6 +1183,8 @@ function cleanProject(input, scenes, nested = false) {
       uid: text(entry.uid, 80), key: text(entry.key), source: { scene: entry.source.scene, id: String(entry.source.id) },
       type: text(entry.type, 80), variant: text(entry.variant, 80), label: text(entry.label), category: text(entry.category, 40),
       model: entry.model ? text(entry.model, 300) : null, note: text(entry.note, 400), transform: cleanTransform(entry.transform),
+      // a name of its own in the stage (letters, digits, spaces and . , - ( ) '): for a mod to find it by
+      ...typeof entry.name === 'string' && /^[A-Za-z0-9 .,()'-]{1,40}$/.test(entry.name) ? { name: entry.name } : {},
       // a stage exit: the level (a stage of the disc) it leads to
       // (arrive false: Mario coming the other way starts at the stage's start, not beside it, as where a
       // level is entered from another isn't always its way out)
@@ -1289,6 +1292,7 @@ function buildScene(library, project) {
     if (!source || source.children || classOf(source.type).kind !== 'actor') throw new Error(`Couldn't find ${added.label} on your disc any more.`);
     const node = cloneNode(source);
     writeTransform(node.data, added.transform);
+    if (added.name) node.nameBytes = sceneBin.encodeName(added.name);
     if (added.exit && EXITS.has(node.type)) {
       const to = stageStart(library, added.exit.scene);
       if (!to) throw new Error(`A stage exit leads to ${sceneLabel(added.exit.scene)}, which the game has no way into.`);

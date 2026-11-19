@@ -702,4 +702,11 @@ test('stage exits lead to a level\'s own levels, named for a mod to find, and an
   assert.throws(() => world.cleanProject({ format: 'sms-world', base: 'home', sublevels: [{ format: 'sms-world', base: 'home' }] }, ['home', 'away']), /stage of its own/);
   const coin = world.cleanProject({ format: 'sms-world', base: 'home', added: [{ ...exit, type: 'Coin', exit: { scene: 'away' } }] }, ['home', 'away']);
   assert.equal(coin.added[0].exit, undefined);
+  // a name of its own, for a mod to find it by
+  const named = world.cleanProject({ format: 'sms-world', name: 'Main', base: 'home', added: [{ ...exit, exit: undefined, name: 'Snowfall' }, { ...exit, uid: 'f', exit: undefined, name: 'bad: name' }] }, ['home', 'away']);
+  assert.equal(named.added[0].name, 'Snowfall');
+  assert.equal(named.added[1].name, undefined);
+  const namedTree = world.buildScene(lib, named).tree;
+  assert.ok(at(namedTree, '1/0/0').children.some(n => sceneBin.decodeName(n.nameBytes) === 'Snowfall'));
+  assert.ok(world.SURFACES.some(x => x.id === 'snow' && x.type === 0 && x.sound === 0x05));
 });
