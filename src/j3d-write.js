@@ -236,16 +236,17 @@ function textureSize(format, w, h, mips) {
   return total;
 }
 
-// TEX1 with some textures replaced by name: { name: { format: 6 (RGBA8) | 14 (CMPR), width, height, rgba } }.
+// TEX1 with some textures replaced by name: { name: { format: 6 (RGBA8) | 14 (CMPR), width, height, rgba } };
+// "*" replaces every texture not named.
 function tex1(template, replacements) {
   const t = template, n = t.readUInt16BE(8), headersAt = t.readUInt32BE(0xc), namesAt = t.readUInt32BE(0x10);
   const names = nameTable(t, namesAt);
   const headers = [], keys = [], blobs = new Map();
   for (let i = 0; i < n; i++) {
     const h = Buffer.from(t.subarray(headersAt + i * 0x20, headersAt + (i + 1) * 0x20));
-    const replacement = replacements[names[i]];
+    const own = replacements[names[i]], replacement = own || replacements['*'];
     if (replacement) {
-      const key = `new:${names[i]}`;
+      const key = own ? `new:${names[i]}` : 'new:*';
       if (!blobs.has(key)) blobs.set(key, replacement.format === 14 ? cmpr(replacement) : rgba8(replacement));
       h[0] = replacement.format; h.writeUInt16BE(replacement.width, 2); h.writeUInt16BE(replacement.height, 4);
       h[0x08] = 0; h[0x09] = 0; h.writeUInt16BE(0, 0x0a); h.writeUInt32BE(0, 0x0c);

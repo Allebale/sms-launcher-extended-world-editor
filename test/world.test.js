@@ -444,6 +444,13 @@ test('retextures are checked and written into the stage archive\'s copy of each 
   const skin = out(written, at + written.readUInt32BE(at + 0x0c)), eye = out(written, at + written.readUInt32BE(at + 0x0c) + 0x20);
   assert.deepEqual([skin.width, skin.format, Array.from(skin.rgba.subarray(0, 3)).map(v => v > 150)], [16, 14, [true, false, false]]);
   assert.deepEqual([eye.width, eye.format, eye.rgba[0]], [8, 6, 0x80]);
+  // "*": every texture of the file (a wrapping for a whole model whose texture names aren't known)
+  const all = world.cleanProject({ format: 'sms-world', base: 'home', retextures: { 'montew/mow_body.bmd|*': { png } } }, ['home']);
+  assert.deepEqual(Object.keys(all.retextures), ['montew/mow_body.bmd|*']);
+  tree.root.entries[0].dir.entries[0].file.data = bmd;
+  assert.equal(world.applyRetextures(tree, all.retextures), 1);
+  const again = tree.root.entries[0].dir.entries[0].file.data, [at2] = require('../src/j3d-write').sections(again).get('TEX1');
+  for (const k of [0, 1]) assert.equal(out(again, at2 + again.readUInt32BE(at2 + 0x0c) + 0x20 * k).width, 16);
 });
 
 test('ground added to a stage grows the pools its Map entry gives the game for it', () => {

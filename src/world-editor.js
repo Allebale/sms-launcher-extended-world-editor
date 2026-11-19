@@ -1252,7 +1252,7 @@ function createView(canvas) {
   const retextureTargets = new Map(), retextured = new Map();
   function showRetexture(texture) {
     const { key, original } = texture.userData;
-    const image = retextured.get(key);
+    const image = retextured.get(key) || retextured.get(`${key.split('|')[0]}|*`);  // its own, or the whole file's
     texture.image = image ? { data: image.data, width: image.width, height: image.height } : original;
     texture.needsUpdate = true;
   }
@@ -1288,7 +1288,7 @@ function createView(canvas) {
         texture.userData = { key, original: texture.image };
         if (!retextureTargets.has(key)) retextureTargets.set(key, new Set());
         retextureTargets.get(key).add(texture);
-        if (retextured.has(key)) showRetexture(texture);
+        if (retextured.has(key) || retextured.has(`${key.split('|')[0]}|*`)) showRetexture(texture);
       }
       return texture;
     });
@@ -2414,7 +2414,7 @@ function createView(canvas) {
       const changed = new Set([...retextured.keys(), ...map.keys()]);
       retextured.clear();
       for (const [key, image] of map) retextured.set(key, image);
-      for (const key of changed) for (const texture of retextureTargets.get(key) || []) showRetexture(texture);
+      for (const [key, textures] of retextureTargets) if (changed.has(key) || changed.has(`${key.split('|')[0]}|*`)) textures.forEach(showRetexture);
     },
     // A model to read again (a texture of the level's own drawn differently now).
     forgetModel(ref) {
