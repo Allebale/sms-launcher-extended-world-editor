@@ -36,7 +36,8 @@
       "World editor: an emptied stage no longer keeps its own hanging wires in the air.",
       "World editor: a blank level no longer shows the old stage's ground in its mirror, its river, or its shadow areas.",
       "World editor: a level file's solid 3D model can be hidden: Mario stands on it, but it is never drawn.",
-      "World editor: enemies brought from another stage now walk about where you put them, instead of all heading to the middle of the level."
+      "World editor: enemies brought from another stage now walk about where you put them, instead of all heading to the middle of the level.",
+      "World editor: a big solid model in a file of its own now keeps its ground in its own file too, so a level's ground can go past the 32,767 corners one file holds."
     ],
     "game": [
       "Split-screen co-op: jumping while carrying the other player no longer pushes you sideways.",

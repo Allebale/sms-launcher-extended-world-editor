@@ -854,15 +854,48 @@ function smallStageTextures(data, edit) {
 
 // The level's models in files of their own: for each, its model file, its ground (unplaced; the game
 // sets it where each copy stands) and the scene objects that show it.
+// Models in files of their own whose ground goes in their own name's ground file too, not the stage's: a
+// solid model with one copy, in a name that has a ground file (SEPARATE_SLOTS). The game reads each ground
+// file's corners as signed 16-bit (TMapCollisionBase::setCheckData), so the stage's file holds at most 32,767;
+// each of these is a file of its own with its own 32,767, and a big level's ground fits split across them.
+// The game puts a MapStaticObj's ground into the stage's grid as fixed ground (TMapCollisionStatic, kind 0 in
+// initAllCheckData), moved to where the object stands only when it has under 350 corners (setUp: from 350 it
+// takes them as they are), so a big one is written where the copy stands and a small one unplaced.
+// model id -> its one copy
+function groundApart(library, project) {
+  const out = new Map();
+  for (const { model, slot, pieces } of separateModels(library, project))
+    if (slot.ground && pieces.length === 1 && pieces[0].solid) out.set(model.id, pieces[0]);
+  return out;
+}
+const STATIC_PLACED_UNDER = 350;
 function buildSeparate(library, project, SURFACES) {
   const out = [];
   const codeOf = id => { const s = SURFACES.find(x => x.id === id) || SURFACES[0]; return s.type * 256 + s.sound; };
+  const apart = groundApart(library, project);
   for (const { model, slot, pieces } of separateModels(library, project)) {
     const stats = {};
     const bmd = buildMap(library, project, { only: model.id, stats });
-    // the file the game looks for: one small floor far below everything, set where each copy stands
-    const col = slot.ground ? collisionFile.compose(null, { add: [{ p: [[0, -200000, 0], [0, -200000, 50], [50, -200000, 0]], code: codeOf('stone') }] }) : null;
-    out.push({ model, slot, pieces, bmd, col, stats, groundCorners: 0 });
+    let col = null, groundCorners = 0;
+    if (apart.has(model.id)) {
+      const piece = apart.get(model.id), stored = (project.models || []).find(m => m.id === model.id);
+      const faces = where => {
+        const add = [];
+        for (const part of userModels.decodeModel(stored).parts)
+          for (const face of userModelFaces(part, where)) add.push({ p: face.p, code: build.isFloor(face.n) ? codeOf(piece.ground) : codeOf('stone') });
+        return add;
+      };
+      const placedAdd = faces(piece);
+      col = collisionFile.compose(null, { add: placedAdd });
+      const pos = collisionFile.parse(col).position, seen = new Set();
+      for (let k = 0; k < pos.length; k += 3) seen.add(`${pos[k]},${pos[k + 1]},${pos[k + 2]}`);
+      groundCorners = seen.size;
+      if (groundCorners < STATIC_PLACED_UNDER) col = collisionFile.compose(null, { add: faces({ ...piece, position: [0, 0, 0], yaw: 0, scale: 1 }) });
+    } else if (slot.ground) {
+      // the file the game looks for: one small floor far below everything, set where each copy stands
+      col = collisionFile.compose(null, { add: [{ p: [[0, -200000, 0], [0, -200000, 50], [50, -200000, 0]], code: codeOf('stone') }] });
+    }
+    out.push({ model, slot, pieces, bmd, col, stats, groundCorners, groundApart: apart.has(model.id) });
   }
   return out;
 }
@@ -986,6 +1019,7 @@ function buildGround(library, project, surfaces, defaults) {
   const add = [];
   const codeOf = id => { const s = surfaces.find(x => x.id === id) || surfaces[0]; return s.type * 256 + s.sound; };
   const stone = codeOf('stone');
+  const apart = groundApart(library, project);
   for (const piece of project.pieces || []) {
     if (piece.kind === 'prefab') {
       const parsed = parsePrefabRef(piece.ref);
@@ -1003,7 +1037,9 @@ function buildGround(library, project, surfaces, defaults) {
       continue;
     }
     if (piece.kind === 'model') {
-      // models in files of their own too: their ground stays the stage's (SEPARATE_SLOTS)
+      // models in files of their own too: their ground stays the stage's (SEPARATE_SLOTS), unless it has a
+      // ground file of its own (groundApart)
+      if (apart.has(piece.ref)) continue;
       const stored = piece.solid && (project.models || []).find(m => m.id === piece.ref);
       if (!stored) continue;
       for (const part of userModels.decodeModel(stored).parts)
@@ -1085,5 +1121,5 @@ function invert(m) {
 module.exports = {
   PALETTE, PALETTE_GROUPS, PREFABS, palette, paletteModel, isUserTexture, cleanUserTextures, userBti, userEntry, setUserTextures, setUserModels, cleanRetextures, retextureImage, prefabs, prefabModel, prefabRef, parsePrefabRef, stageModel,
   cleanStage, hasStageEdits, buildMap, buildGround, buildSea, openSea, plainTemplate, EMPTY_KEEPS, texAffine, untexAffine, plainTexMatrices,
-  buildSeparate, separateGround, separateModels, freeSlots, SEPARATE_SLOTS, SEPARATE_MAX, MAX_WIRES, SUN_TIMES,
+  buildSeparate, separateGround, separateModels, groundApart, freeSlots, SEPARATE_SLOTS, SEPARATE_MAX, MAX_WIRES, SUN_TIMES,
 };

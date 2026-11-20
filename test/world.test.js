@@ -775,3 +775,17 @@ test('an added walker whose graph the stage lacks gets a ring of its own, not th
   assert.equal(rail.readInt16BE(nodes + 0x44 + 4), -1500);
   assert.equal(rail.readInt16BE(nodes + 6), 8);
 });
+
+test('a solid model of its own with one copy keeps its ground in its own file, each file with its own 32,767 corners', () => {
+  const stage = require('../src/world-stage');
+  const lib = { sceneTree: () => ({ type: 'root', children: [] }), scenes: () => ['bianco0'] };
+  const models = [{ id: 'model-00000000000a', label: 'ground', separate: true }, { id: 'model-00000000000b', label: 'twice', separate: true },
+    { id: 'model-00000000000c', label: 'drawn only', separate: true }];
+  const pieces = [{ kind: 'model', ref: models[0].id, position: [0, 0, 0], yaw: 0, scale: 1, solid: true },
+    { kind: 'model', ref: models[1].id, position: [0, 0, 0], yaw: 0, scale: 1, solid: true },
+    { kind: 'model', ref: models[1].id, position: [900, 0, 0], yaw: 0, scale: 1, solid: true },
+    { kind: 'model', ref: models[2].id, position: [0, 0, 0], yaw: 0, scale: 1, solid: false }];
+  const apart = stage.groundApart(lib, { base: 'bianco0', models, pieces });
+  // the first model takes a name with a ground file; two copies, or not solid: the stage's ground as before
+  assert.deepEqual([...apart.keys()], [models[0].id]);
+});
