@@ -34,7 +34,8 @@
       "World editor: level files can give every texture of a placed thing's model one new picture at once.",
       "World editor: a premade level's thing can name other kinds it may be found as on your disc.",
       "World editor: an emptied stage no longer keeps its own hanging wires in the air.",
-      "World editor: a blank level no longer shows the old stage's ground in its mirror, its river, or its shadow areas."
+      "World editor: a blank level no longer shows the old stage's ground in its mirror, its river, or its shadow areas.",
+      "World editor: a level file's solid 3D model can be hidden: Mario stands on it, but it is never drawn."
     ],
     "game": [
       "Split-screen co-op: jumping while carrying the other player no longer pushes you sideways.",

@@ -412,6 +412,12 @@ test('players\' own models are read in game units, standing where they\'re place
   ] }, ['home']);
   assert.deepEqual(clean.models.map(m => [m.id, m.triangles]), [['model-0123456789ab', 2]]);
   assert.deepEqual(clean.pieces.map(p => [p.uid, p.scale, p.solid, p.ground]), [['a', 50, false, 'stone']]);
+  // hidden (felt, not drawn) only on a solid one
+  const hid = world.cleanProject({ format: 'sms-world', base: 'home', models: [stored], pieces: [
+    { uid: 'h', kind: 'model', ref: 'model-0123456789ab', position: [0, 0, 0], solid: true, hidden: true },
+    { uid: 'i', kind: 'model', ref: 'model-0123456789ab', position: [0, 0, 0], solid: false, hidden: true },
+  ] }, ['home']);
+  assert.deepEqual(hid.pieces.map(p => [p.uid, Boolean(p.hidden)]), [['h', true], ['i', false]]);
   const back = models.decodeModel(clean.models[0]);
   assert.deepEqual(Array.from(back.parts[0].position), Array.from(part.position));
   assert.deepEqual(Array.from(back.parts[0].index), Array.from(part.index));

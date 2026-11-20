@@ -603,7 +603,10 @@ function cleanStage(input, scenes) {
     if (piece.kind === 'model') {
       if (!userModels.isUserModel(piece.ref) || !models.some(m => m.id === piece.ref)) return [];
       const scale = finite(piece.scale, 1e3) && piece.scale > 0 ? Math.max(0.05, Math.min(50, piece.scale)) : 1;
-      return [{ uid, kind: 'model', ref: piece.ref, label, position: [...piece.position], yaw, scale, solid: piece.solid !== false, ground: typeof piece.ground === 'string' && ID.test(piece.ground) ? piece.ground : 'stone' }];
+      // hidden: only felt, never drawn (a solid model's collision alone: steps under a roof, a floor under ground
+      // drawn without one)
+      return [{ uid, kind: 'model', ref: piece.ref, label, position: [...piece.position], yaw, scale, solid: piece.solid !== false, ground: typeof piece.ground === 'string' && ID.test(piece.ground) ? piece.ground : 'stone',
+        ...piece.hidden === true && piece.solid !== false ? { hidden: true } : {} }];
     }
     if (!build.KIND[piece.kind]) return [];
     const textures = { top: ID.test(piece.textures?.top) ? piece.textures.top : 'delfino-tiles', side: ID.test(piece.textures?.side) ? piece.textures.side : 'delfino-white-wall' };
@@ -688,12 +691,12 @@ function staticObjName(data) {
 // The level's models in files of their own: [{ model, slot, pieces }]; models past the free
 // names go into the stage model as usual.
 function separateModels(library, project) {
-  const wanted = (project.models || []).filter(m => m.separate && (project.pieces || []).some(p => p.kind === 'model' && p.ref === m.id));
+  const wanted = (project.models || []).filter(m => m.separate && (project.pieces || []).some(p => p.kind === 'model' && p.ref === m.id && !p.hidden));
   if (!wanted.length) return [];
   const free = freeSlots(library, project.base), out = [];
   for (const model of wanted) {
     if (!free.length) break;
-    out.push({ model, slot: free.shift(), pieces: project.pieces.filter(p => p.kind === 'model' && p.ref === model.id) });
+    out.push({ model, slot: free.shift(), pieces: project.pieces.filter(p => p.kind === 'model' && p.ref === model.id && !p.hidden) });
   }
   return out;
 }
@@ -823,7 +826,7 @@ function buildMap(library, project, { only = null, stats = null } = {}) {
   for (const piece of project.pieces || []) {
     if (piece.kind === 'model' && apart.has(piece.ref)) continue;  // in a file of its own
     if (piece.kind === 'prefab') { addPrefab(library, edit, piece, { data, materialFor: null, plain, model, addFaces, textures, toHost, hostMatrices, hostShape, bounds }); continue; }
-    if (piece.kind === 'model') { addUserModel(edit, piece, project, { plain, model, addFaces, textures }); continue; }
+    if (piece.kind === 'model') { if (!piece.hidden) addUserModel(edit, piece, project, { plain, model, addFaces, textures }); continue; }
     const groups = new Map();
     for (const face of build.faces(piece, id => fitOf(id, project))) {
       if (!groups.has(face.texture)) groups.set(face.texture, []);
