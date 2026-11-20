@@ -1256,10 +1256,77 @@ function removeWhere(tree, test) {
   go(tree);
 }
 
+// Graphs (map/scene.ral): the paths walking characters wander along, each named in the character's data
+// (TSpineEnemy::load: its manager, then its graph). A name the stage has no graph for gets the game's
+// stand-in, two points at the world's middle (grDummyRail), so every such character walked there and
+// crowded round it (Allebale: the snowmen, Stu stacks from Pinna Park's dango2, all ended up in one spot).
+// An added character whose graph the stage lacks gets one of its own instead: a ring round where it
+// stands, with its middle, each point set down on the ground below it as the stage loads (flag 0x10,
+// TGraphWeb::attachToGround).
+const WANDER_RADIUS = 500, WANDER_POINTS = 8, WANDER_LIFT = 200, RAIL_NODE = 0x44;
+function railGraphs(data) {
+  const graphs = [];
+  if (!data) return graphs;
+  for (let at = 0; at + 12 <= data.length; at += 12) {
+    const count = data.readUInt32BE(at);
+    if (!count) break;
+    const nameAt = data.readUInt32BE(at + 4), nodesAt = data.readUInt32BE(at + 8);
+    let end = nameAt;
+    while (end < data.length && data[end]) end++;
+    graphs.push({ name: data.toString('latin1', nameAt, end), nodes: Buffer.from(data.subarray(nodesAt, nodesAt + count * RAIL_NODE)), count });
+  }
+  return graphs;
+}
+function writeRail(graphs) {
+  const head = (graphs.length + 1) * 12;
+  const names = graphs.map(g => Buffer.concat([Buffer.from(g.name, 'latin1'), Buffer.alloc(1)]));
+  let at = head + names.reduce((n, b) => n + b.length, 0);
+  at = (at + 3) & ~3;
+  const out = Buffer.alloc(at + graphs.reduce((n, g) => n + g.nodes.length, 0));
+  let nameAt = head, nodesAt = at;
+  graphs.forEach((g, i) => {
+    out.writeUInt32BE(g.count, i * 12), out.writeUInt32BE(nameAt, i * 12 + 4), out.writeUInt32BE(nodesAt, i * 12 + 8);
+    names[i].copy(out, nameAt), g.nodes.copy(out, nodesAt);
+    nameAt += names[i].length, nodesAt += g.nodes.length;
+  });
+  return out;
+}
+function wanderGraph(name, [x, y, z]) {
+  const count = WANDER_POINTS + 1, nodes = Buffer.alloc(count * RAIL_NODE);
+  const points = [[x, z]];
+  for (let k = 0; k < WANDER_POINTS; k++) {
+    const a = 2 * Math.PI * k / WANDER_POINTS;
+    points.push([x + WANDER_RADIUS * Math.sin(a), z + WANDER_RADIUS * Math.cos(a)]);
+  }
+  const clamp = v => Math.max(-32767, Math.min(32767, Math.round(v)));
+  points.forEach(([px, pz], i) => {
+    const b = i * RAIL_NODE;
+    const links = i === 0 ? Array.from({ length: WANDER_POINTS }, (_, k) => k + 1)
+      : [0, 1 + (i % WANDER_POINTS), 1 + ((i + WANDER_POINTS - 2) % WANDER_POINTS)];
+    nodes.writeInt16BE(clamp(px), b), nodes.writeInt16BE(clamp(y + WANDER_LIFT), b + 2), nodes.writeInt16BE(clamp(pz), b + 4);
+    nodes.writeInt16BE(links.length, b + 6);
+    nodes.writeUInt32BE(0x10, b + 8);
+    links.forEach((to, k) => {
+      nodes.writeUInt16BE(to, b + 0x14 + 2 * k);
+      nodes.writeFloatBE(Math.hypot(points[to][0] - px, points[to][1] - pz), b + 0x24 + 4 * k);
+    });
+  });
+  return { name, nodes, count };
+}
+// Where the graph's name sits in a character's data (its third string after the light map), or null
+function graphNameAt(data) {
+  const at = actorNamesEnd(data, 2);
+  if (at < 0 || at + 2 > data.length) return null;
+  const length = data.readUInt16BE(at);
+  return at + 2 + length <= data.length ? { at, end: at + 2 + length, text: sceneBin.decodeName(data.subarray(at + 2, at + 2 + length)) } : null;
+}
+
 // The stage's scene with the project's edits: objects moved, removed and
 // added, with the managers added characters need.
 function buildScene(library, project) {
   const tree = cloneNode(library.sceneTree(project.base));
+  const stageGraphs = railGraphs(library.files(project.base).get('map/scene.ral'));
+  const known = new Set(stageGraphs.map(g => g.name)), wanderers = [];
   const removed = [];
   for (const [id, edit] of Object.entries(project.edits)) {
     const node = sceneBin.find(tree, id);
@@ -1303,6 +1370,16 @@ function buildScene(library, project) {
     const node = cloneNode(source);
     writeTransform(node.data, added.transform);
     if (added.name) rename(node, sceneBin.encodeName(added.name));
+    if (classOf(node.type).family === 'spine') {
+      const graph = graphNameAt(node.data);
+      // ("(null)" asks for none: a character standing still, as many NPCs are, is left so)
+      if (graph && graph.text && graph.text !== '(null)' && !known.has(graph.text)) {
+        const name = `wander${wanderers.length}`, bytes = sceneBin.encodeName(name), field = Buffer.alloc(2 + bytes.length);
+        field.writeUInt16BE(bytes.length, 0), bytes.copy(field, 2);
+        node.data = Buffer.concat([node.data.subarray(0, graph.at), field, node.data.subarray(graph.end)]);
+        wanderers.push(wanderGraph(name, added.transform.position));
+      }
+    }
     if (added.exit && EXITS.has(node.type)) {
       const to = stageStart(library, added.exit.scene);
       if (!to) throw new Error(`A stage exit leads to ${sceneLabel(added.exit.scene)}, which the game has no way into.`);
@@ -1337,7 +1414,8 @@ function buildScene(library, project) {
   const separate = stage.hasStageEdits(project) ? stage.buildSeparate(library, project, SURFACES) : [];
   if (separate.length) addSeparateObjects(library, tree, separate);
   if (Object.keys(project.paint).length || stage.hasStageEdits(project)) growCollisionPools(library, project, tree, buildCollision(library, project), separate);
-  return { tree, needs, raised, separate };
+  const rail = wanderers.length ? writeRail([...stageGraphs, ...wanderers]) : null;
+  return { tree, needs, raised, separate, rail };
 }
 
 // The sun: the stage's lights from the sun (and the ones opposite it, which light from below) and
@@ -1566,8 +1644,9 @@ function buildModel(library, project) { return stage.buildMap(library, project);
 // The whole stage archive with the project in it, Yaz0-compressed as the game stores it.
 function buildArchive(library, project) {
   const tree = archive.readTree(library.read(archiveFile(project.base)));
-  const { tree: scene, needs, separate } = buildScene(library, project);
+  const { tree: scene, needs, separate, rail } = buildScene(library, project);
   archive.treePut(tree, 'map/scene.bin', sceneBin.serialize(scene));
+  if (rail) archive.treePut(tree, originalPath(tree, 'map/scene.ral'), rail);
   // in lower case: the game's archives find files by their lower-case names (JKRArchive::CArcName)
   for (const { slot, bmd, col } of separate) {
     archive.treePut(tree, `map/map/${slot.name.toLowerCase()}.bmd`, bmd);

@@ -749,3 +749,29 @@ test('a Yoshi egg brings its balloon (the fruit it wants) along with its model',
   for (const f of ['mapobj/eggyoshi_fukidashi.bmd', 'mapobj/eggyoshi_fukidashi.btp', 'mapobj/eggyoshi_fukidashi_wait.bck', 'mapobj/eggyoshi_broken.bmd']) assert.ok(got.includes(f), f);
   assert.ok(!got.includes('mapobj/fruitbanana.bmd'));
 });
+
+test('an added walker whose graph the stage lacks gets a ring of its own, not the world\'s middle', () => {
+  const lib = library();
+  const away = lib.sceneTree('away');
+  const walker = sceneBin.parse(actor('NPCKinopio', 'stu 0', [0, 0, 0], Buffer.concat([str('stus'), str('dango2')])));
+  const group = at(away, '1/0/1');
+  group.children.push(walker);
+  const id = `1/0/1/${group.children.length - 1}`;
+  const { tree, rail } = world.buildScene(lib, project({ added: [
+    { uid: 'a', key: 'x', source: { scene: 'away', id }, transform: t([1000, 50, -2000]) },
+    { uid: 'b', key: 'y', source: { scene: 'away', id: '1/0/1/0' }, transform: t([0, 0, 0]) }] }));
+  const placed = [];
+  sceneBin.walk(tree, node => { if (!node.children && world.describe(node).names[1] === 'stus') placed.push(world.describe(node).names); });
+  assert.deepEqual(placed.map(n => n[2]), ['wander0']);
+  const toads = [];
+  sceneBin.walk(tree, node => { if (!node.children && world.describe(node).names[1] === 'toads') toads.push(world.describe(node).names[2]); });
+  assert.ok(toads.length >= 1 && toads.every(n => n === '(null)')); // asked for no graph: left standing
+  assert.ok(rail);
+  assert.equal(rail.readUInt32BE(0), 9);
+  assert.equal(rail.readUInt32BE(12), 0);
+  const nodes = rail.readUInt32BE(8);
+  assert.equal(rail.readInt16BE(nodes), 1000);
+  assert.equal(rail.readInt16BE(nodes + 2), 250);
+  assert.equal(rail.readInt16BE(nodes + 0x44 + 4), -1500);
+  assert.equal(rail.readInt16BE(nodes + 6), 8);
+});
