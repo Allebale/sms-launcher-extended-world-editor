@@ -324,6 +324,8 @@ test('a level\'s lines replace what the stage\'s characters say, in turn, and wi
   assert.equal(sceneBin.parse(tree.root.entries[0].dir.entries[1].file.data).children[0].children.length, 2);
   world.applyWires(tree, [], true);
   assert.equal(sceneBin.parse(tree.root.entries[0].dir.entries[1].file.data).children[0].children.length, 0);
+  // a stage without tables: nothing to clear, no error
+  world.applyWires({ root: { name: 'scene', entries: [] } }, [], true);
 });
 
 test('players\' own textures are kept checked, and written as the game\'s compressed format with smaller levels', () => {

@@ -33,7 +33,8 @@
       "World editor: a Yoshi egg placed in another stage now shows its balloon with the fruit it wants.",
       "World editor: level files can give every texture of a placed thing's model one new picture at once.",
       "World editor: a premade level's thing can name other kinds it may be found as on your disc.",
-      "World editor: an emptied stage no longer keeps its own hanging wires in the air."
+      "World editor: an emptied stage no longer keeps its own hanging wires in the air.",
+      "World editor: a blank level no longer shows the old stage's ground in its mirror, its river, or its shadow areas."
     ],
     "game": [
       "Split-screen co-op: jumping while carrying the other player no longer pushes you sideways.",

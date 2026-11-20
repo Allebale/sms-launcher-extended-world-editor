@@ -1250,6 +1250,7 @@ const EXITS = new Set(['MapObjChangeStage', 'MapObjChangeStageHipDrop']);
 const SUBLEVELS_MAX = 4;
 const exitName = (area, episode) => `Exit to ${area} ${episode}`;
 const GOOP_EVENTS = new Set(['MapEventSinkInPollution', 'MapEventSinkInPollutionReset', 'MapEventSinkBianco']);
+const OLD_SCENERY = /^(Reflect|BiancoRiver$|SoundObjRiver$)/;
 function removeWhere(tree, test) {
   const go = node => { if (node.children) node.children = node.children.filter(child => { if (test(child)) return false; go(child); return true; }); };
   go(tree);
@@ -1278,6 +1279,9 @@ function buildScene(library, project) {
   // others): they'd crash, and there's nothing left for them to sink. TMarDirector looks for them by
   // name and goes on without them.
   if (project.blank) removeWhere(tree, node => !node.children && GOOP_EVENTS.has(node.type));
+  // A blank stage's own scenery that stays drawn without its map: the mirror's copy of the old ground and
+  // sky (Bianco Hills' lake showed its hills over the new level), its river and the river's sounds
+  if (project.blank) removeWhere(tree, node => !node.children && node.type === 'MapStaticObj' && OLD_SCENERY.test(describe(node).variant || ''));
   if (project.emptyAll) removeWhere(tree, node => {
     if (node.children || node.type === 'Mario') return false;
     const described = describe(node);
@@ -1367,7 +1371,7 @@ function findId(tree, test) {
 // makes into wires as the stage loads. A cube stands on its middle, turned about Y: the wire runs along
 // its length (Z) at its top, and Mario grabs it from inside the cube (CLBIsPointInCube).
 const WIRE_TABLE = 'ワイヤーキューブテーブル', WIRE_TABLE_SJIS = Buffer.from('838f83438384815b834c8385815b83758365815b8375838b', 'hex');
-const WIRE_DROP = 250, WIRE_WIDTH = 200;
+const WIRE_DROP = 250, WIRE_WIDTH = 200, OLD_AREA_TABLES = new Set(['鏡キューブテーブル', '影キューブテーブル']);
 function wireCube(wire, n) {
   const [a, b] = [wire.a, wire.b], top = (a[1] + b[1]) / 2;
   const length = Math.hypot(b[0] - a[0], b[2] - a[2]);
@@ -1381,12 +1385,16 @@ function wireCube(wire, n) {
 function applyWires(tree, wires, clearOwn = false) {
   if (!wires?.length && !clearOwn) return;
   const found = archive.treeFile(tree, 'map/tables.bin');
+  if (!found && !wires?.length) return;
   if (!found) throw new Error('This stage has no table for wires, so wires can\'t be added to it.');
   const tables = sceneBin.parse(Buffer.from(found.file.data));
   let table = null;
   sceneBin.walk(tables, node => { if (!table && node.children && sceneBin.decodeName(node.nameBytes) === WIRE_TABLE) table = node; });
   if (clearOwn && table) table.children = [];
-  if (!wires?.length && !table) return;
+  // and the stage's mirror areas (no mirror is left to show: its copy of the old ground is gone) and shadow
+  // areas (where the old buildings shaded whoever stood under them)
+  if (clearOwn) sceneBin.walk(tables, node => { if (node.children && OLD_AREA_TABLES.has(sceneBin.decodeName(node.nameBytes))) node.children = []; });
+  if (!wires?.length && !table) { archive.treePut(tree, originalPath(tree, 'map/tables.bin'), sceneBin.serialize(tables)); return; }
   if (!table) {
     if (!tables.children) throw new Error('This stage\'s tables can\'t take wires.');
     table = { type: 'CubeGeneralInfoTable', nameBytes: Buffer.from(WIRE_TABLE_SJIS), data: Buffer.alloc(0), children: [] };
