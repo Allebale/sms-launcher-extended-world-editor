@@ -329,8 +329,8 @@ function renderBudget(budget) {
   if (budget.model) row('Stage model corners', corners(budget.model), detail(budget.model));
   if (budget.ground !== undefined) row('Ground corners', budget.ground || 0, '', budget.groundLimit || 32767);
   for (const own of budget.separate || []) {
-    row(`${own.label} (own file)`, corners(own), detail(own));
-    if (own.ground) row(`${own.label} ground (own file)`, own.ground, '', budget.groundLimit || 32767);
+    row(`${own.label} (own file, drawn)`, corners(own), detail(own));
+    if (own.ground) row(`${own.label} (own file, ground)`, own.ground, '', budget.groundLimit || 32767);
   }
   const notes = [];
   if (budget.slots !== undefined) notes.push(`${(budget.separate || []).length} of ${budget.slots} own model files used on this stage.`);
