@@ -1228,7 +1228,9 @@ function resolvePremade(catalog, input) {
       const like = !entry.model && !entry.label && (byKey.get(String(entry.key || '')) || byType.get(String(entry.type || entry.key || '')));
       return [like ? { ...entry, key: like.key, type: like.type, variant: like.variant, label: like.label, category: like.category, model: like.model, note: like.note } : entry];
     }
-    const item = byKey.get(String(entry?.key || '')) || byType.get(String(entry?.type || entry?.key || ''));
+    // `keys`: other names it may go by on a disc (the same thing in another class), tried in turn
+    const alt = Array.isArray(entry?.keys) ? entry.keys.map(k => byKey.get(String(k))).find(Boolean) : null;
+    const item = byKey.get(String(entry?.key || '')) || alt || byType.get(String(entry?.type || entry?.key || ''));
     if (!item) { missing.add(String(entry?.label || entry?.key || entry?.type || 'something')); return []; }
     return [{ uid: entry.uid, key: item.key, source: item.source, type: item.type, variant: item.variant, label: item.label, category: item.category,
       model: item.model, note: item.note, transform: entry.transform || { position: [0, 0, 0], rotation: [0, 0, 0], scale: [...(item.scale || [1, 1, 1])] },

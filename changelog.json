@@ -31,7 +31,8 @@
       "World editor: a level file can bring levels of its own, each built on another stage, with stage exits that lead into them; Play in game takes them all along.",
       "World editor: a Snow ground type, with soft crunchy footsteps and no sand footprints, and level files can give the things they place names of their own that mods can find in the game.",
       "World editor: a Yoshi egg placed in another stage now shows its balloon with the fruit it wants.",
-      "World editor: level files can give every texture of a placed thing's model one new picture at once."
+      "World editor: level files can give every texture of a placed thing's model one new picture at once.",
+      "World editor: a premade level's thing can name other kinds it may be found as on your disc."
     ],
     "game": [
       "Split-screen co-op: jumping while carrying the other player no longer pushes you sideways.",

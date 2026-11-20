@@ -658,6 +658,10 @@ test('a premade level\'s things named by kind are found in the catalog', () => {
   assert.equal(out.added.length, 3);
   assert.deepEqual(out.added[0].source, { scene: 'bianco0', id: '6/2/3/1' });
   assert.equal(out.added[0].name, 'Snowfall');
+  // a thing that may go by another name: the first of its `keys` the disc has
+  const alt = world.resolvePremade(catalog, { added: [{ key: 'Nothing:here', keys: ['Nothing:here', catalog.items[0].key], transform: t }] });
+  assert.equal(alt.added.length, 1);
+  assert.equal(alt.added[0].key, catalog.items[0].key);
   assert.equal(out.added[1].key, 'HamuKuri:x');
   assert.deepEqual(out.added[1].transform.position, [1, 2, 3]);
   assert.deepEqual(out.unresolved, ['Nothing']);
