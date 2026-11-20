@@ -1376,13 +1376,17 @@ function wireCube(wire, n) {
   [(a[0] + b[0]) / 2, top - WIRE_DROP, (a[2] + b[2]) / 2, 0, yaw, 0, WIRE_WIDTH / 100, WIRE_DROP / 100, length / 100].forEach((v, k) => data.writeFloatBE(v, k * 4));
   return { type: 'CubeGeneralInfo', nameBytes: Buffer.from(`wire ${n}`, 'latin1'), data, children: null };
 }
-function applyWires(tree, wires) {
-  if (!wires?.length) return;
+// clearOwn: an emptied stage (a plain or blank level) drops the stage's own wires first, which would
+// otherwise hang in the air where its buildings were (Bianco Hills' 13)
+function applyWires(tree, wires, clearOwn = false) {
+  if (!wires?.length && !clearOwn) return;
   const found = archive.treeFile(tree, 'map/tables.bin');
   if (!found) throw new Error('This stage has no table for wires, so wires can\'t be added to it.');
   const tables = sceneBin.parse(Buffer.from(found.file.data));
   let table = null;
   sceneBin.walk(tables, node => { if (!table && node.children && sceneBin.decodeName(node.nameBytes) === WIRE_TABLE) table = node; });
+  if (clearOwn && table) table.children = [];
+  if (!wires?.length && !table) return;
   if (!table) {
     if (!tables.children) throw new Error('This stage\'s tables can\'t take wires.');
     table = { type: 'CubeGeneralInfoTable', nameBytes: Buffer.from(WIRE_TABLE_SJIS), data: Buffer.alloc(0), children: [] };
@@ -1582,7 +1586,7 @@ function buildArchive(library, project) {
     }
   }
   applyRetextures(tree, project.retextures);
-  applyWires(tree, project.wires);
+  applyWires(tree, project.wires, Boolean(project.blank || project.emptyAll));
   applyMessages(tree, project.messages);
   // The level's own files (a character's model, a parameter file), over anything copied above
   for (const [file, data] of Object.entries(project.files || {})) archive.treePut(tree, originalPath(tree, file), Buffer.from(data, 'base64'));

@@ -319,6 +319,11 @@ test('a level\'s lines replace what the stage\'s characters say, in turn, and wi
   const back = sceneBin.parse(tree.root.entries[0].dir.entries[1].file.data);
   assert.equal(sceneBin.decodeName(back.children[0].nameBytes), 'ワイヤーキューブテーブル');
   assert.equal(back.children[0].children[0].type, 'CubeGeneralInfo');
+  // an emptied stage keeps only the level's own wires
+  world.applyWires(tree, [{ a: [0, 900, 0], b: [0, 900, 500] }, { a: [0, 900, 0], b: [500, 900, 0] }], true);
+  assert.equal(sceneBin.parse(tree.root.entries[0].dir.entries[1].file.data).children[0].children.length, 2);
+  world.applyWires(tree, [], true);
+  assert.equal(sceneBin.parse(tree.root.entries[0].dir.entries[1].file.data).children[0].children.length, 0);
 });
 
 test('players\' own textures are kept checked, and written as the game\'s compressed format with smaller levels', () => {
