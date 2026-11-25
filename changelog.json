@@ -1,7 +1,9 @@
 {
   "_instructions": "Players see this file in the launcher. Add each player-visible change here in the same commit: launcher changes to beta.launcher, game changes Beta now builds to beta.game. Releases move beta into a new entry (npm run update:game does it). One plain sentence for players per line, no commit hashes or PR numbers. See AGENTS.md.",
   "beta": {
-    "launcher": [],
+    "launcher": [
+      "World editor: mods can show their own enemies in the editor, so Christmas Additions' gingerbread men and bauble Bob-ombs now appear where a level places them instead of as invisible coins."
+    ],
     "game": [
       "Split-screen co-op: jumping while carrying the other player no longer pushes you sideways.",
       "Split-screen co-op: talking to someone now stops only the player talking. Their camera goes in and their buttons read the text, while the other player keeps playing.",

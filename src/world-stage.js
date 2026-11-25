@@ -408,8 +408,14 @@ function plainStage(library, base) {
 function userModelBaked(library, id) {
   const known = userModelsOf.get(library), stored = known?.models.get(id);
   if (!stored) throw new Error('That model isn\'t in this level.');
-  const model = userModels.decodeModel(stored);
-  const { model: stageModelData, plain } = plainStage(library, known.base);
+  return bakeModel(library, known.base, userModels.decodeModel(stored), id);
+}
+// A mod's own model for its marker objects (modmodel|…, read by main.js from the mod's folder), drawn as players' are.
+function modModel(library, ref, encoded) {
+  return library.cached(ref, () => bakeModel(library, userModelsOf.get(library)?.base || 'dolpic0', userModels.decodeModel(encoded), encoded.id));
+}
+function bakeModel(library, base, model, id) {
+  const { model: stageModelData, plain } = plainStage(library, base);
   const template = stageModelData.materials[plain.index];
   const textures = [], materials = [], shapes = [], position = [], codes = [];
   model.parts.forEach((part, i) => {
@@ -1119,7 +1125,7 @@ function invert(m) {
 }
 
 module.exports = {
-  PALETTE, PALETTE_GROUPS, PREFABS, palette, paletteModel, isUserTexture, cleanUserTextures, userBti, userEntry, setUserTextures, setUserModels, cleanRetextures, retextureImage, prefabs, prefabModel, prefabRef, parsePrefabRef, stageModel,
+  PALETTE, PALETTE_GROUPS, PREFABS, palette, paletteModel, modModel, isUserTexture, cleanUserTextures, userBti, userEntry, setUserTextures, setUserModels, cleanRetextures, retextureImage, prefabs, prefabModel, prefabRef, parsePrefabRef, stageModel,
   cleanStage, hasStageEdits, buildMap, buildGround, buildSea, openSea, plainTemplate, EMPTY_KEEPS, texAffine, untexAffine, plainTexMatrices,
   buildSeparate, separateGround, separateModels, groundApart, freeSlots, SEPARATE_SLOTS, SEPARATE_MAX, MAX_WIRES, SUN_TIMES,
 };

@@ -79,6 +79,7 @@ async function boot() {
       renderCatalog();
     }
     if (page.hidden) return;
+    await loadModMarkers();
     if (!project) await openLevel(levels.defaultScene);
     else if (!view) await showLevel(savedCamera);
   } catch (error) {
@@ -381,9 +382,21 @@ function setTransform(id, transform) {
   else project.edits[id] = { transform };
 }
 
+// Mods' models for what a level marks for them ("Gingerbread 1", an invisible coin the Christmas Additions mod
+// puts its gingerbread man on): from each installed mod's editor/markers.ini, read again each time the editor opens.
+let modMarkers = [];
+const markerPattern = name => new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/#/g, '\\d+')}$`);
+async function loadModMarkers() {
+  try { modMarkers = (await window.sms.worldModMarkers?.() || []).map(marker => ({ ...marker, test: markerPattern(marker.name) })); } catch (_) { modMarkers = []; }
+}
+function withModMarker(object) {
+  const marker = object.name && !object.piece ? modMarkers.find(m => m.test.test(object.name)) : null;
+  return marker ? { ...object, model: marker.ref } : object;
+}
+
 function syncScene() {
   if (!view || !level) return;
-  view.syncObjects(objects(), selected);
+  view.syncObjects(objects().map(withModMarker), selected);
   view.setStage(project, texturePaintVersion);
 }
 

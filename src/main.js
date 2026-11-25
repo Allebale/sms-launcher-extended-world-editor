@@ -1537,6 +1537,7 @@ function worldCatalog() {
 // "prefab|scene|x0,z0,x1,z1" (a piece of a stage, such as a building).
 function worldModel(ref) {
   const library = worldLib(), [scene, file, extra] = String(ref).split('|');
+  if (scene === 'modmodel') return worldStage.modModel(library, String(ref), modModelFile(file, extra));
   if (scene === 'palette' && /^[a-z0-9-]{1,40}$/.test(file || '') && extra === undefined) return library.model(ref);
   if (scene === 'usermodel' && /^model-[0-9a-f]{12}$/.test(file || '') && extra === undefined) return library.model(ref);
   if (scene === 'prefab' && library.scenes().includes(file) && /^-?\d+,-?\d+,-?\d+,-?\d+$/.test(extra || '')) return library.model(ref);
@@ -1732,6 +1733,46 @@ async function worldTextureImport(event) {
   const label = path.basename(file, path.extname(file)).replace(/[_-]+/g, ' ').replace(/[^\w ()'.,-]+/g, '').trim().slice(0, 40) || 'My texture';
   return { id: `user-${crypto.createHash('sha1').update(png).digest('hex').slice(0, 12)}`, label, png: png.toString('base64'), width, height, cutout: seeThrough,
     resized: width !== size.width || height !== size.height, original: size };
+}
+
+// Mods' own models for objects a level marks for them (a mod's enemy standing on an invisible coin named
+// "Gingerbread 1"): each installed mod's editor/markers.ini, lines of "Name # = model.obj, label" (# a number),
+// the OBJ files beside it. They live in the mod, so the editor shows whatever version of it is installed.
+const MOD_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/, MOD_FILE = /^[A-Za-z0-9][A-Za-z0-9 _.-]{0,63}\.obj$/;
+function modEditorFolder(id) {
+  const mod = MOD_ID.test(String(id)) && nativeMods.installed(app.getPath('userData')).find(m => m.id === id);
+  return mod ? path.join(mod.dir, 'editor') : null;
+}
+function worldModMarkers() {
+  const out = [];
+  for (const mod of nativeMods.installed(app.getPath('userData'))) {
+    if (!MOD_ID.test(mod.id) || !nativeMods.isEnabled(mod.id)) continue;
+    let text = '';
+    try { text = fs.readFileSync(path.join(mod.dir, 'editor', 'markers.ini'), 'utf8'); } catch (_) { continue; }
+    for (const raw of text.split(/\r?\n/).slice(0, 64)) {
+      const line = raw.trim(), eq = line.indexOf('=');
+      if (!line || line[0] === '#' || line[0] === ';' || eq <= 0) continue;
+      const name = line.slice(0, eq).trim().slice(0, 60), [file, ...label] = line.slice(eq + 1).split(',').map(v => v.trim());
+      if (!name || !MOD_FILE.test(file || '') || !fs.existsSync(path.join(mod.dir, 'editor', file))) continue;
+      out.push({ mod: mod.id, modName: mod.name, name, label: (label.join(', ') || file).slice(0, 40), ref: `modmodel|${mod.id}|${file}` });
+    }
+  }
+  return out;
+}
+const modModels = new Map();  // "id|file" -> { stamp, encoded }
+function modModelFile(id, file) {
+  const folder = modEditorFolder(id);
+  if (!folder || !MOD_FILE.test(String(file || ''))) throw new Error('That mod model isn\'t installed.');
+  const target = path.join(folder, file), stat = fs.statSync(target);
+  if (stat.size > 32 << 20) throw new Error('That mod model is too large.');
+  const key = `${id}|${file}`, stamp = `${stat.size}-${stat.mtimeMs}`, known = modModels.get(key);
+  if (known?.stamp === stamp) return known.encoded;
+  const near = () => null;  // vertex colours only: no .mtl or pictures
+  const data = require('./obj-glb').objToGlb(fs.readFileSync(target, 'utf8'), near);
+  const read = worldModels.readGlb(data, bytes => worldPicture(nativeImage.createFromBuffer(bytes)));
+  const encoded = worldModels.encodeModel({ id: `model-${crypto.createHash('sha1').update(key + stamp).digest('hex').slice(0, 12)}`, label: path.basename(file, '.obj'), ...read });
+  modModels.set(key, { stamp, encoded });
+  return encoded;
 }
 
 // A 3D model of the player's (binary glTF, .glb) for their level, read into
@@ -2696,6 +2737,7 @@ function registerHandlers() {
   ipcMain.handle('world-catalog', () => worldCatalog());
   ipcMain.handle('world-load', (_event, scene) => world.loadLevel(worldLib(), String(scene)));
   ipcMain.handle('world-model', (_event, ref) => worldModel(ref));
+  ipcMain.handle('world-mod-markers', () => worldModMarkers());
   ipcMain.handle('world-play', (_event, project) => exclusive('Play Super Mario Sunshine', () => worldPlay(project), true));
   ipcMain.handle('world-save', (_event, project) => worldSave(project));
   ipcMain.handle('world-projects', () => worldProjects());
@@ -2707,6 +2749,7 @@ function registerHandlers() {
   ipcMain.handle('world-model-import', event => worldModelImport(event));
   // The textures a placed thing shows that can be given another picture, as PNGs.
   ipcMain.handle('world-retexturable', (_event, ref) => {
+    if (String(ref).startsWith('modmodel|')) return [];  // a mod's own: changed in the mod
     worldModel(ref);  // checks the ref
     const { writePng } = require('./texture-image');
     return world.retexturable(worldLib(), String(ref)).map(({ rgba, ...texture }) => ({ ...texture, png: writePng(texture.width, texture.height, rgba).toString('base64') }));

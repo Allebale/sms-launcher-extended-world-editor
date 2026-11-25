@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('sms', {
   worldCatalog: () => ipcRenderer.invoke('world-catalog'),
   worldLoad: scene => ipcRenderer.invoke('world-load', scene),
   worldModel: ref => ipcRenderer.invoke('world-model', ref),
+  worldModMarkers: () => ipcRenderer.invoke('world-mod-markers'),
   worldSave: project => ipcRenderer.invoke('world-save', project),
   worldProjects: () => ipcRenderer.invoke('world-projects'),
   worldOpen: file => ipcRenderer.invoke('world-open', file),
